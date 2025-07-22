@@ -187,6 +187,7 @@ def hitl_health_bot(graph: CompiledStateGraph):
     while True:
         thread_id += 1
         print(f"\n--- Starting new session (session ID: {thread_id}) ---")
+
         # TODO get input from user
         user_question = "Back pain"
 
@@ -194,28 +195,33 @@ def hitl_health_bot(graph: CompiledStateGraph):
         config = RunnableConfig()
         config["configurable"] = {"thread_id": thread_id}
 
+        # need to keep track of which messages we're printing
+        last_printed_message_id = None
+
         for event in graph.stream(input={"user_question": user_question},
                                   config=config,
                                   stream_mode="values"):
             if event.get("messages"):
-                event["messages"][-1].pretty_print()
+                message = event["messages"][-1]
+                if message.id != last_printed_message_id:
+                    message.pretty_print()
+                    last_printed_message_id = message.id
 
         # TODO get input from user
         # quiz_requested = input("Would you like to do a comprehension quiz? (
         # y/n)")
         quiz_requested = "yes"
         if quiz_requested.lower() in ["yes", "y"]:
-
-            # TODO this prints the last message again, leading to a
-            #  duplicate print
             for event in graph.stream(input=None, config=config,
                                       stream_mode="values"):
                 if event.get("messages"):
-                    event["messages"][-1].pretty_print()
+                    message = event["messages"][-1]
+                    if message.id != last_printed_message_id:
+                        message.pretty_print()
+                        last_printed_message_id = message.id
 
         # TODO get input from user, handle cases where they won't provide
         #  an answer
-
         # quiz_answer = input("What's the answer to this question (free
         # text)?")
         quiz_answer = (
@@ -228,7 +234,10 @@ def hitl_health_bot(graph: CompiledStateGraph):
                                   config=config,
                                   stream_mode="values"):
             if event.get("messages"):
-                event["messages"][-1].pretty_print()
+                message = event["messages"][-1]
+                if message.id != last_printed_message_id:
+                    message.pretty_print()
+                    last_printed_message_id = message.id
 
         # TODO get user input
         user_proceeds = "n"
