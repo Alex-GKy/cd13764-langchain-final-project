@@ -1,4 +1,4 @@
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -12,7 +12,6 @@ import dotenv_loader
 import os
 import mlflow
 
-
 # MLFlow setup
 try:
     mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI",
@@ -21,7 +20,6 @@ try:
     mlflow.langchain.autolog()
 except:
     print("MLflow server not running. Proceeding without MLflow.")
-
 
 # TODO remove before flight
 # set up debug mode
@@ -91,6 +89,30 @@ def summarize(state: State):
     return {"messages": [ai_message], "answer": ai_message.content}
 
 
+def generate_quiz(state: State):
+    system_message = SystemMessage(
+        "Generate a comprehension quiz based on the summary from the web "
+        "search tool."
+        "Use only the results from the web tool."
+        "Only generate one question and 4 choices as answers."
+        "Do not generate the correct answer yet."
+    )
+    ai_message = llm.invoke(state["messages"] + [system_message])
+
+    # TODO remove before flight - local LLM can't handle this
+    if DEBUG == "True":
+        ai_message = AIMessage(
+            content="Here is a sample question: What causes back pain?\n"
+                    "A) Lifting heavy objects\n"
+                    "B) Sitting for long periods of time\n"
+                    "C) Muscle strain\n"
+                    "D) All of the above\n",
+            metadata={}
+        )
+
+    return {"messages": [ai_message]}
+
+
 @tool
 def web_search(query: str) -> Dict:
     """
@@ -113,6 +135,7 @@ workflow.add_node("entry_point", entry_point)
 workflow.add_node("agent", agent)
 workflow.add_node("web_search", ToolNode([web_search]))
 workflow.add_node("summarize", summarize)
+workflow.add_node("generate_quiz", generate_quiz)
 
 workflow.add_edge(START, "entry_point")
 workflow.add_edge("entry_point", "agent")
@@ -122,7 +145,8 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_edge("web_search", "summarize")
-workflow.add_edge("summarize", END)
+workflow.add_edge("summarize", "generate_quiz")
+workflow.add_edge("generate_quiz", END)
 
 memory = MemorySaver()
 graph = workflow.compile(
@@ -151,11 +175,12 @@ def hitl_health_bot(graph: CompiledStateGraph, thread_id: int):
             event["messages"][-1].pretty_print()
 
     # TODO get input from user
-    # quiz_requested = input("Would you like to do a comprehension quiz? (y/n)")
+    # quiz_requested = input("Would you like to do a comprehension quiz? (
+    # y/n)")
     quiz_requested = "yes"
-    if quiz_requested.lower() == "yes":
+    if quiz_requested.lower() in ["yes", "y"]:
         for event in graph.stream(input=None, config=config,
-                                  stream_mode="updates"):
+                                  stream_mode="values"):
             if event.get("messages"):
                 event["messages"][-1].pretty_print()
 
