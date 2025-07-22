@@ -46,6 +46,8 @@ llm = ChatOpenAI(
 class State(MessagesState):
     user_question: str
     summary: str
+    comprehension_question: str
+    quiz_answer: str
 
 
 def entry_point(state: State):
@@ -93,7 +95,8 @@ def generate_quiz(state: State):
     system_message = SystemMessage(
         "Generate a comprehension quiz based on the summary from the web "
         "search tool."
-        "Only generate one question and 4 choices as answers."
+        "Only generate one single-sentence question and no options for "
+        "answers, as the user is supposed to provide a free text answer."
         "Do not generate the correct answer yet."
         f'Use only this information as source for your question: '
         f'{state["summary"]}'
@@ -103,13 +106,29 @@ def generate_quiz(state: State):
     # TODO remove before flight - local LLM can't handle this
     if DEBUG == "True":
         ai_message = AIMessage(
-            content="Here is a sample question: What causes back pain?\n"
-                    "A) Lifting heavy objects\n"
-                    "B) Sitting for long periods of time\n"
-                    "C) Muscle strain\n"
-                    "D) All of the above\n",
+            content="Here is a sample question: What causes back pain?\n",
             metadata={}
         )
+
+    return {"messages": [ai_message],
+            "comprehension_question": ai_message.content}
+
+
+def grade_quiz(state: State):
+    system_message = SystemMessage(
+        "You are grading a comprehension quiz about health"
+        "Don't grade too hard - accept short answers from the user"
+        f"The question was: {state['comprehension_question']}"
+        f"The user's answer is: {state['quiz_answer']}"
+        "Grade the user's answer with a grade from A (best) to F (failed)"
+        f"For your grade, use only information from this summary of web "
+        f"search results on the topic:{state['summary']}"
+        "Provide a short explanation for your grade, and a citation from the "
+        "summaries provided above"
+    )
+
+    # Don't need full context here as we're only grading
+    ai_message = llm.invoke([system_message])
 
     return {"messages": [ai_message]}
 
@@ -137,6 +156,7 @@ workflow.add_node("agent", agent)
 workflow.add_node("web_search", ToolNode([web_search]))
 workflow.add_node("summarize", summarize)
 workflow.add_node("generate_quiz", generate_quiz)
+workflow.add_node("grade_quiz", grade_quiz)
 
 workflow.add_edge(START, "entry_point")
 workflow.add_edge("entry_point", "agent")
@@ -147,11 +167,12 @@ workflow.add_conditional_edges(
 
 workflow.add_edge("web_search", "summarize")
 workflow.add_edge("summarize", "generate_quiz")
-workflow.add_edge("generate_quiz", END)
+workflow.add_edge("generate_quiz", "grade_quiz")
+workflow.add_edge("grade_quiz", END)
 
 memory = MemorySaver()
 graph = workflow.compile(
-    interrupt_after=["summarize"],
+    interrupt_after=["summarize", "generate_quiz", "grade_quiz"],
     checkpointer=memory)
 
 # TODO remove before flight
@@ -186,6 +207,22 @@ def hitl_health_bot(graph: CompiledStateGraph, thread_id: int):
                                   stream_mode="values"):
             if event.get("messages"):
                 event["messages"][-1].pretty_print()
+
+    # TODO get input from user, handle cases where they won't provide
+    #  an answer
+
+    # quiz_answer = input("What's the answer to this question (free text)?")
+    quiz_answer = (
+        "Symptoms for back pain are pain, of course. Causes: Bad posture, "
+        "long sitting, too fat or no exercise")
+
+    graph.update_state(config, {"quiz_answer": quiz_answer})
+
+    for event in graph.stream(input=None,
+                              config=config,
+                              stream_mode="values"):
+        if event.get("messages"):
+            event["messages"][-1].pretty_print()
 
 
 hitl_health_bot(graph=graph, thread_id=1)
