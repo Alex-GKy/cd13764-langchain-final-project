@@ -150,5 +150,14 @@ def hitl_health_bot(graph: CompiledStateGraph, thread_id: int):
         if event.get("messages"):
             event["messages"][-1].pretty_print()
 
+    # TODO get input from user
+    # quiz_requested = input("Would you like to do a comprehension quiz? (y/n)")
+    quiz_requested = "yes"
+    if quiz_requested.lower() == "yes":
+        for event in graph.stream(input=None, config=config,
+                                  stream_mode="updates"):
+            if event.get("messages"):
+                event["messages"][-1].pretty_print()
+
 
 hitl_health_bot(graph=graph, thread_id=1)
