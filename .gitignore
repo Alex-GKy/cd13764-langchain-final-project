@@ -1,7 +1,7 @@
 # Custom
 
 .context
-.png
+*.png
 mlruns
 .history
 .idea
