@@ -23,7 +23,6 @@ except:
     print("MLflow server not running. Proceeding without MLflow.")
 
 
-
 # TODO remove before flight
 # set up debug mode
 
@@ -32,6 +31,9 @@ from mock_responses import MOCK_WEB_SEARCH_RESPONSE
 DEBUG = os.getenv("DEBUG")
 base_url = "http://localhost:1234/v1" if DEBUG == "True" else \
     "https://openai.vocareum.com/v1"
+
+print(f"Debug: {DEBUG}, \n"
+      f"base_url: {base_url}")
 
 # debug end
 # TODO remove above
@@ -53,10 +55,8 @@ def entry_point(state: State):
     system_message = SystemMessage(
         "You are a health bot. You are a helpful and reliable assistant"
         " that answers questions about health."
-        "You prefer to use web search to find information.When receiving "
-        "search results,"
-        "synthesize the information into a coherent, helpful response. Cite "
-        "your sources."
+        "You prefer to use web search to find information. When receiving "
+        "a question, use web search to find top web search results"
     )
 
     human_message = HumanMessage(state["user_question"])
@@ -67,7 +67,7 @@ def entry_point(state: State):
 
 def agent(state: State):
     ai_message = llm.invoke(state["messages"])
-    return {"messages": [ai_message], "answer": ai_message.content}
+    return {"messages": [ai_message]}
 
 
 def router(state: State):
@@ -78,6 +78,17 @@ def router(state: State):
         return "web_search"
     else:
         return END
+
+
+def summarize(state: State):
+    system_message = SystemMessage(
+        "Summarize the search results from the web search tool into a "
+        "coherent,"
+        "helpful response, spanning 3-4 paragraphs."
+        "Cite your sources briefly."
+    )
+    ai_message = llm.invoke(state["messages"] + [system_message])
+    return {"messages": [ai_message], "answer": ai_message.content}
 
 
 @tool
@@ -101,6 +112,7 @@ workflow = StateGraph(State)
 workflow.add_node("entry_point", entry_point)
 workflow.add_node("agent", agent)
 workflow.add_node("web_search", ToolNode([web_search]))
+workflow.add_node("summarize", summarize)
 
 workflow.add_edge(START, "entry_point")
 workflow.add_edge("entry_point", "agent")
@@ -109,10 +121,13 @@ workflow.add_conditional_edges(
     source="agent", path=router, path_map=["web_search", END]
 )
 
-workflow.add_edge("web_search", "agent")
+workflow.add_edge("web_search", "summarize")
+workflow.add_edge("summarize", END)
 
 memory = MemorySaver()
-graph = workflow.compile(checkpointer=memory)
+graph = workflow.compile(
+    interrupt_after=["summarize"],
+    checkpointer=memory)
 
 # TODO remove before flight
 # draw the graph for inspection reasons
@@ -123,13 +138,13 @@ with open("health_bot_workflow.png", "wb") as f:
 
 def hitl_health_bot(graph: CompiledStateGraph, thread_id: int):
     # TODO get input from user
-    human_input = "Back pain"
+    user_question = "Back pain"
 
     # not really needed but for keeping types consistent
     config = RunnableConfig()
     config["configurable"] = {"thread_id": thread_id}
 
-    for event in graph.stream(input={"user_question": human_input},
+    for event in graph.stream(input={"user_question": user_question},
                               config=config,
                               stream_mode="values"):
         if event.get("messages"):
