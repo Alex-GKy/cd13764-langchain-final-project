@@ -182,52 +182,60 @@ with open("health_bot_workflow.png", "wb") as f:
     f.write(png_bytes)
 
 
-def hitl_health_bot(graph: CompiledStateGraph, thread_id: int):
-    # TODO get input from user
-    user_question = "Back pain"
+def hitl_health_bot(graph: CompiledStateGraph):
+    thread_id = 0
+    while True:
+        thread_id += 1
+        print(f"\n--- Starting new session (session ID: {thread_id}) ---")
+        # TODO get input from user
+        user_question = "Back pain"
 
-    # not really needed but for keeping types consistent
-    config = RunnableConfig()
-    config["configurable"] = {"thread_id": thread_id}
+        # not really needed but for keeping types consistent
+        config = RunnableConfig()
+        config["configurable"] = {"thread_id": thread_id}
 
-    for event in graph.stream(input={"user_question": user_question},
-                              config=config,
-                              stream_mode="values"):
-        if event.get("messages"):
-            event["messages"][-1].pretty_print()
-
-    # TODO get input from user
-    # quiz_requested = input("Would you like to do a comprehension quiz? (
-    # y/n)")
-    quiz_requested = "yes"
-    if quiz_requested.lower() in ["yes", "y"]:
-
-        # TODO this prints the last message again, leading to a duplicate print
-        for event in graph.stream(input=None, config=config,
+        for event in graph.stream(input={"user_question": user_question},
+                                  config=config,
                                   stream_mode="values"):
             if event.get("messages"):
                 event["messages"][-1].pretty_print()
 
-    # TODO get input from user, handle cases where they won't provide
-    #  an answer
+        # TODO get input from user
+        # quiz_requested = input("Would you like to do a comprehension quiz? (
+        # y/n)")
+        quiz_requested = "yes"
+        if quiz_requested.lower() in ["yes", "y"]:
 
-    # quiz_answer = input("What's the answer to this question (free text)?")
-    quiz_answer = (
-        "Symptoms for back pain are pain, of course. Causes: Bad posture, "
-        "long sitting, too fat or no exercise")
+            # TODO this prints the last message again, leading to a
+            #  duplicate print
+            for event in graph.stream(input=None, config=config,
+                                      stream_mode="values"):
+                if event.get("messages"):
+                    event["messages"][-1].pretty_print()
 
-    graph.update_state(config, {"quiz_answer": quiz_answer})
+        # TODO get input from user, handle cases where they won't provide
+        #  an answer
 
-    for event in graph.stream(input=None,
-                              config=config,
-                              stream_mode="values"):
-        if event.get("messages"):
-            event["messages"][-1].pretty_print()
+        # quiz_answer = input("What's the answer to this question (free
+        # text)?")
+        quiz_answer = (
+            "Symptoms for back pain are pain, of course. Causes: Bad posture, "
+            "long sitting, too fat or no exercise")
 
-    # TODO get user input
-    user_proceeds = "y"
-    if user_proceeds.lower() in ["yes", "y"]:
-        hitl_health_bot(graph=graph, thread_id=thread_id + 1)
+        graph.update_state(config, {"quiz_answer": quiz_answer})
+
+        for event in graph.stream(input=None,
+                                  config=config,
+                                  stream_mode="values"):
+            if event.get("messages"):
+                event["messages"][-1].pretty_print()
+
+        # TODO get user input
+        user_proceeds = "n"
+        if user_proceeds.lower() not in ["yes", "y"]:
+            print("\nExiting.")
+            break
 
 
-hitl_health_bot(graph=graph, thread_id=1)
+if __name__ == "__main__":
+    hitl_health_bot(graph=graph)
