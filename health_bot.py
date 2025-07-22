@@ -12,10 +12,15 @@ import os
 import mlflow
 
 
-# MLflow setup
-mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000"))
-mlflow.set_experiment("health_bot")
-mlflow.langchain.autolog()
+# MLFlow setup
+try:
+    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI",
+                                      "http://127.0.0.1:5000"))
+    mlflow.set_experiment("health_bot")
+    mlflow.langchain.autolog()
+except:
+    print("MLflow server not running. Proceeding without MLflow.")
+
 
 
 # TODO remove before flight
