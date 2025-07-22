@@ -8,6 +8,7 @@ from langgraph.graph import StateGraph, MessagesState, START, END, add_messages
 from langgraph.prebuilt import ToolNode
 from tavily import TavilyClient
 from typing import Dict
+import dotenv_loader
 import os
 import mlflow
 
