@@ -224,5 +224,10 @@ def hitl_health_bot(graph: CompiledStateGraph, thread_id: int):
         if event.get("messages"):
             event["messages"][-1].pretty_print()
 
+    # TODO get user input
+    user_proceeds = "y"
+    if user_proceeds.lower() in ["yes", "y"]:
+        hitl_health_bot(graph=graph, thread_id=thread_id + 1)
+
 
 hitl_health_bot(graph=graph, thread_id=1)
