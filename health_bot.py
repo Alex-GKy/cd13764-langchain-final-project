@@ -38,7 +38,7 @@ print(f"Debug: {DEBUG}, \n"
 
 llm = ChatOpenAI(
     model="gpt-4o-mini",
-    temperature=0.0,
+    temperature=0.2,
     base_url=base_url
 )
 
