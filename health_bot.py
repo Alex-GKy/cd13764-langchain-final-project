@@ -45,7 +45,7 @@ llm = ChatOpenAI(
 
 class State(MessagesState):
     user_question: str
-    answer: str
+    summary: str
 
 
 def entry_point(state: State):
@@ -83,19 +83,20 @@ def summarize(state: State):
         "Summarize the search results from the web search tool into a "
         "coherent,"
         "helpful response, spanning 3-4 paragraphs."
-        "Cite your sources briefly."
+        "Cite your sources."
     )
     ai_message = llm.invoke(state["messages"] + [system_message])
-    return {"messages": [ai_message], "answer": ai_message.content}
+    return {"messages": [ai_message], "summary": ai_message.content}
 
 
 def generate_quiz(state: State):
     system_message = SystemMessage(
         "Generate a comprehension quiz based on the summary from the web "
         "search tool."
-        "Use only the results from the web tool."
         "Only generate one question and 4 choices as answers."
         "Do not generate the correct answer yet."
+        f'Use only this information as source for your question: '
+        f'{state["summary"]}'
     )
     ai_message = llm.invoke(state["messages"] + [system_message])
 
@@ -179,6 +180,8 @@ def hitl_health_bot(graph: CompiledStateGraph, thread_id: int):
     # y/n)")
     quiz_requested = "yes"
     if quiz_requested.lower() in ["yes", "y"]:
+
+        # TODO this prints the last message again, leading to a duplicate print
         for event in graph.stream(input=None, config=config,
                                   stream_mode="values"):
             if event.get("messages"):
