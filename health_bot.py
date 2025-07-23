@@ -218,8 +218,7 @@ graph = workflow.compile(
     interrupt_before=["ask_for_quiz", "ask_for_new_topic", "grade_quiz"],
     checkpointer=memory)
 
-# TODO remove before flight
-# draw the graph for inspection reasons
+# draw the graph for inspection/debugging
 png_bytes = graph.get_graph().draw_mermaid_png()
 with open("health_bot_workflow.png", "wb") as f:
     f.write(png_bytes)
