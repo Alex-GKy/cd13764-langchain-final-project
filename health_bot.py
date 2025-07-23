@@ -60,6 +60,7 @@ def entry_point(state: State):
         " that answers questions about health."
         "You prefer to use web search to find information. When receiving "
         "a question, use web search to find top web search results"
+        "You do not accept questions about anything else than health"
     )
 
     human_message = HumanMessage(state["user_question"])
