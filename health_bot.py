@@ -12,6 +12,7 @@ import dotenv_loader
 import os
 import mlflow
 
+
 # MLFlow setup
 try:
     mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI",
@@ -21,21 +22,8 @@ try:
 except:
     print("MLflow server not running. Proceeding without MLflow.")
 
-# TODO remove before flight
-# set up debug mode
 
-from mock_responses import MOCK_WEB_SEARCH_RESPONSE
-
-DEBUG = os.getenv("DEBUG")
-base_url = "http://localhost:1234/v1" if DEBUG == "True" else \
-    "https://openai.vocareum.com/v1"
-
-print(f"Debug: {DEBUG}, \n"
-      f"base_url: {base_url}")
-
-# debug end
-# TODO remove above
-
+base_url = "https://openai.vocareum.com/v1"
 llm = ChatOpenAI(
     model="gpt-4o-mini",
     temperature=0.2,
@@ -92,8 +80,6 @@ def web_search(query: str) -> Dict:
     """
      Return top web search results for a given search query
      """
-    if DEBUG == "True":
-        return MOCK_WEB_SEARCH_RESPONSE
 
     tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
     response = tavily_client.search(query)
@@ -146,13 +132,6 @@ def generate_quiz(state: State):
         f'{state["summary"]}'
     )
     ai_message = llm.invoke(state["messages"] + [system_message])
-
-    # TODO remove before flight - local LLM can't handle this
-    if DEBUG == "True":
-        ai_message = AIMessage(
-            content="Here is a sample question: What causes back pain?\n",
-            metadata={}
-        )
 
     return {"messages": [ai_message],
             "comprehension_question": ai_message.content}
