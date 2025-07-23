@@ -120,7 +120,7 @@ def route_to_quiz(state: State):
         return "generate_quiz"
     else:
         # If they said no, or if something went wrong, end the quiz flow.
-        return END
+        return "ask_for_new_topic"
 
 
 def ask_for_new_topic(state: State):
@@ -203,7 +203,7 @@ workflow.add_conditional_edges(
     path=route_to_quiz,
     path_map={
         "generate_quiz": "generate_quiz",
-        END: END
+        "ask_for_new_topic": "ask_for_new_topic"
     }
 )
 
