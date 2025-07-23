@@ -1,3 +1,8 @@
-# Purpose of this Folder
+Run health_bot.py
 
-This folder should contain a fully working project. This will be added to the reviewer toolkit for reviewers to use.
+It expects the API keys to be in a .env file like so: 
+
+OPENAI_API_KEY=voc...
+TAVILY_API_KEY=tvly...
+
+This always uses vocareum!
