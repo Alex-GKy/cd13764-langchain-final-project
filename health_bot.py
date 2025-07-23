@@ -183,19 +183,26 @@ with open("health_bot_workflow.png", "wb") as f:
 
 
 def hitl_health_bot(graph: CompiledStateGraph):
+    # We'll start a new thread for each run of the graph
     thread_id = 0
     while True:
+
         thread_id += 1
-        print(f"\n--- Starting new session (session ID: {thread_id}) ---")
+        print(f"\n--- Starting new session (session ID: {thread_id}) ---\n")
 
-        # TODO get input from user
-        user_question = "Back pain"
+        # Get a topic from the user and start the research
+        user_question = input("What topic would you like to learn about?\n"
+                              "> ")
 
-        # not really needed but for keeping types consistent
+        if not user_question.strip():
+            print("OK, see you later then!")
+            break
+
+        # Not a must but for keeping types consistent
         config = RunnableConfig()
         config["configurable"] = {"thread_id": thread_id}
 
-        # need to keep track of which messages we're printing
+        # Need to keep track of which messages we're printing
         last_printed_message_id = None
 
         for event in graph.stream(input={"user_question": user_question},
@@ -207,11 +214,12 @@ def hitl_health_bot(graph: CompiledStateGraph):
                     message.pretty_print()
                     last_printed_message_id = message.id
 
-        # TODO get input from user
-        # quiz_requested = input("Would you like to do a comprehension quiz? (
-        # y/n)")
-        quiz_requested = "yes"
+        # Start the quiz loop if the user wants to
+        quiz_requested = input("Would you like to do a quiz? (y/n)\n"
+                               "> ")
+
         if quiz_requested.lower() in ["yes", "y"]:
+
             for event in graph.stream(input=None, config=config,
                                       stream_mode="values"):
                 if event.get("messages"):
@@ -220,27 +228,24 @@ def hitl_health_bot(graph: CompiledStateGraph):
                         message.pretty_print()
                         last_printed_message_id = message.id
 
-        # TODO get input from user, handle cases where they won't provide
-        #  an answer
-        # quiz_answer = input("What's the answer to this question (free
-        # text)?")
-        quiz_answer = (
-            "Symptoms for back pain are pain, of course. Causes: Bad posture, "
-            "long sitting, too fat or no exercise")
+            # Get and grade the user's answer
+            quiz_answer = input("Please state your answer\n"
+                                "> ")
+            graph.update_state(config, {"quiz_answer": quiz_answer})
 
-        graph.update_state(config, {"quiz_answer": quiz_answer})
+            for event in graph.stream(input=None,
+                                      config=config,
+                                      stream_mode="values"):
+                if event.get("messages"):
+                    message = event["messages"][-1]
+                    if message.id != last_printed_message_id:
+                        message.pretty_print()
+                        last_printed_message_id = message.id
 
-        for event in graph.stream(input=None,
-                                  config=config,
-                                  stream_mode="values"):
-            if event.get("messages"):
-                message = event["messages"][-1]
-                if message.id != last_printed_message_id:
-                    message.pretty_print()
-                    last_printed_message_id = message.id
-
-        # TODO get user input
-        user_proceeds = "n"
+        user_proceeds = input("Would you like to talk about another topic ("
+                              "y/n)?\n"
+                              "> ")
+        # user_proceeds = "n"
         if user_proceeds.lower() not in ["yes", "y"]:
             print("\nExiting.")
             break
