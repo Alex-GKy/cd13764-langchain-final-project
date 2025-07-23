@@ -48,6 +48,8 @@ class State(MessagesState):
     summary: str
     comprehension_question: str
     quiz_answer: str
+    quiz_choice: str
+    new_topic_choice: str
 
 
 def entry_point(state: State):
@@ -79,6 +81,19 @@ def route_to_tool(state: State):
         return END
 
 
+@tool
+def web_search(query: str) -> Dict:
+    """
+     Return top web search results for a given search query
+     """
+    if DEBUG == "True":
+        return MOCK_WEB_SEARCH_RESPONSE
+
+    tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+    response = tavily_client.search(query)
+    return response
+
+
 def summarize(state: State):
     system_message = SystemMessage(
         "Summarize the search results from the web search tool into a "
@@ -88,6 +103,30 @@ def summarize(state: State):
     )
     ai_message = llm.invoke(state["messages"] + [system_message])
     return {"messages": [ai_message], "summary": ai_message.content}
+
+
+def ask_for_quiz(state: State):
+    # This is a breakpoint to ask the user for input
+
+    return state
+
+
+def route_to_quiz(state: State):
+    """
+    Checks the user's decision from the state and routes accordingly.
+    This runs AFTER the human-in-the-loop step.
+    """
+    if state.get("quiz_choice") == "yes":
+        return "generate_quiz"
+    else:
+        # If they said no, or if something went wrong, end the quiz flow.
+        return END
+
+
+def ask_for_new_topic(state: State):
+    # This is a breakpoint to ask the user is they want to continue
+
+    return state
 
 
 def generate_quiz(state: State):
@@ -132,19 +171,6 @@ def grade_quiz(state: State):
     return {"messages": [ai_message]}
 
 
-@tool
-def web_search(query: str) -> Dict:
-    """
-     Return top web search results for a given search query
-     """
-    if DEBUG == "True":
-        return MOCK_WEB_SEARCH_RESPONSE
-
-    tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-    response = tavily_client.search(query)
-    return response
-
-
 # bind tools
 llm = llm.bind_tools([web_search])
 
@@ -156,7 +182,10 @@ workflow.add_node("web_search", ToolNode([web_search]))
 workflow.add_node("summarize", summarize)
 workflow.add_node("generate_quiz", generate_quiz)
 workflow.add_node("grade_quiz", grade_quiz)
+workflow.add_node("ask_for_quiz", ask_for_quiz)
+workflow.add_node("ask_for_new_topic", ask_for_new_topic)
 
+# Start
 workflow.add_edge(START, "entry_point")
 workflow.add_edge("entry_point", "agent")
 
@@ -167,13 +196,26 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_edge("web_search", "summarize")
-workflow.add_edge("summarize", "generate_quiz")
+workflow.add_edge("summarize", "ask_for_quiz")
+
+workflow.add_conditional_edges(
+    source="ask_for_quiz",
+    path=route_to_quiz,
+    path_map={
+        "generate_quiz": "generate_quiz",
+        END: END
+    }
+)
+
 workflow.add_edge("generate_quiz", "grade_quiz")
-workflow.add_edge("grade_quiz", END)
+workflow.add_edge("grade_quiz", "ask_for_new_topic")
+
+# This will interrupt so we can ask the user if they want to continue
+workflow.add_edge("ask_for_new_topic", END)
 
 memory = MemorySaver()
 graph = workflow.compile(
-    interrupt_after=["summarize", "generate_quiz", "grade_quiz"],
+    interrupt_before=["ask_for_quiz", "ask_for_new_topic", "grade_quiz"],
     checkpointer=memory)
 
 # TODO remove before flight
@@ -186,15 +228,18 @@ with open("health_bot_workflow.png", "wb") as f:
 def hitl_health_bot(graph: CompiledStateGraph):
     # We'll start a new thread for each run of the graph
     thread_id = 0
+
+    # Outer loop, each run is one separate conversation
     while True:
 
         thread_id += 1
         print(f"\n--- Starting new session (session ID: {thread_id}) ---\n")
 
         # Get a topic from the user and start the research
-        user_question = input("What topic would you like to learn about?\n"
+        user_question = input("\nWhat topic would you like to learn about?\n"
                               "> ")
 
+        # Make sure they enter anything
         if not user_question.strip():
             print("OK, see you later then!")
             break
@@ -206,58 +251,113 @@ def hitl_health_bot(graph: CompiledStateGraph):
         # Need to keep track of which messages we're printing
         last_printed_message_id = None
 
-        for event in graph.stream(input={"user_question": user_question},
-                                  config=config,
-                                  stream_mode="values"):
-            if event.get("messages"):
-                message = event["messages"][-1]
-                if message.id != last_printed_message_id:
-                    message.pretty_print()
-                    last_printed_message_id = message.id
+        # This holds the input for the graph
+        current_input = {"user_question": user_question}
 
-        # Start the quiz loop if the user wants to
-        quiz_requested = input("Would you like to do a quiz? (y/n)\n"
-                               "> ")
-
-        if quiz_requested.lower() in ["yes", "y"]:
-
-            # Quiz was requested, generate a question
-            for event in graph.stream(input=None, config=config,
-                                      stream_mode="values"):
-                if event.get("messages"):
-                    message = event["messages"][-1]
-                    if message.id != last_printed_message_id:
-                        message.pretty_print()
-                        last_printed_message_id = message.id
-
-            # Get the user's answer and make sure it's long enough
-            quiz_answer = input("Please state your answer\n"
-                                "> ")
-            while not quiz_answer.strip() or len(quiz_answer) < 5:
-                quiz_answer = input(
-                    "It looks like you haven't entered an answer. Please "
-                    "try again.\n"
-                    "> ")
-
-            # Continue with grading the answer
-            graph.update_state(config, {"quiz_answer": quiz_answer})
-
-            for event in graph.stream(input=None,
+        # This is the inner loop, representing one run of the graph
+        # Basically, this keeps calling graph.stream and handles interrupts
+        while True:
+            for event in graph.stream(input=current_input,
                                       config=config,
                                       stream_mode="values"):
-                if event.get("messages"):
-                    message = event["messages"][-1]
+                if messages := event.get("messages", []):
+                    message = messages[-1]
+
+                    # Print the message only if it hasn't been yet
                     if message.id != last_printed_message_id:
                         message.pretty_print()
                         last_printed_message_id = message.id
 
-        # Restart with another topic or exit
-        user_proceeds = input("Would you like to talk about another topic ("
-                              "y/n)?\n"
-                              "> ")
-        if user_proceeds.lower() not in ["yes", "y"]:
-            print("\nExiting.")
+            # As soon as an interrupt happens, check what's up next
+            state = graph.get_state(config)
+            next_node = state.next[0] if state.next else None
+
+            # Check if we've reached the end
+            if not state.next or state.next[0] == END:
+                # print("\n--- See you later! ---\n")
+                break
+
+            # The graph is about to enter the quiz section - ask the user
+            # if they're interested
+            if next_node == "ask_for_quiz":
+                # Start the quiz loop if the user wants to
+                quiz_requested = input("Would you like to do a quiz? (y/n)\n"
+                                       "> ")
+                choice = "yes" if (quiz_requested.lower().strip()
+                                   in ["y", "yes"]) else "no"
+
+                graph.update_state(config, {"quiz_choice": choice})
+
+            # Capture the answer to the quiz
+            elif next_node == "grade_quiz":
+                # Get the user's answer and make sure it's long enough
+                quiz_answer = input("Please state your answer\n"
+                                    "> ")
+                while not quiz_answer.strip() or len(quiz_answer) < 5:
+                    quiz_answer = input(
+                        "It looks like you haven't entered an answer. Please "
+                        "try again.\n"
+                        "> ")
+
+                graph.update_state(config, {"quiz_answer": quiz_answer})
+
+            elif next_node == "ask_for_new_topic":
+                new_topic_choice = input("Research another topic? (y/n)\n> ")
+                choice = "yes" if new_topic_choice.lower().strip() in [
+                    "y", "yes"] else "no"
+                graph.update_state(config, {"new_topic_choice": choice})
+
+            # After this, the inner loop will run again and continue the stream
+            # Hence we need to make sure the graph's input will be empty
+            current_input = None
+
+        final_state = graph.get_state(config)
+        if final_state.values.get("new_topic_choice") == "no":
+            print("Got it, goodbye!")
             break
+
+            ### old code
+            # if quiz_requested.lower() in ["yes", "y"]:
+            #
+            #     # Quiz was requested, generate a question
+            #     for event in graph.stream(input=None, config=config,
+            #                               stream_mode="values"):
+            #         if event.get("messages"):
+            #             message = event["messages"][-1]
+            #             if message.id != last_printed_message_id:
+            #                 message.pretty_print()
+            #                 last_printed_message_id = message.id
+            #
+            #     # Get the user's answer and make sure it's long enough
+            #     quiz_answer = input("Please state your answer\n"
+            #                         "> ")
+            #     while not quiz_answer.strip() or len(quiz_answer) < 5:
+            #         quiz_answer = input(
+            #             "It looks like you haven't entered an answer.
+            #             Please "
+            #             "try again.\n"
+            #             "> ")
+            #
+            #     # Continue with grading the answer
+            #     graph.update_state(config, {"quiz_answer": quiz_answer})
+            #
+            #     for event in graph.stream(input=None,
+            #                               config=config,
+            #                               stream_mode="values"):
+            #         if event.get("messages"):
+            #             message = event["messages"][-1]
+            #             if message.id != last_printed_message_id:
+            #                 message.pretty_print()
+            #                 last_printed_message_id = message.id
+            #
+            # # Restart with another topic or exit
+            # user_proceeds = input(
+            #     "Would you like to talk about another topic ("
+            #     "y/n)?\n"
+            #     "> ")
+            # if user_proceeds.lower() not in ["yes", "y"]:
+            #     print("\nExiting.")
+            #     break
 
 
 if __name__ == "__main__":
