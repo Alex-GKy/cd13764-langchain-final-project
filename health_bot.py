@@ -53,7 +53,7 @@ class State(MessagesState):
 
 
 def entry_point(state: State):
-    print(state["user_question"])
+
     system_message = SystemMessage(
         "You are a health bot. You are a helpful and reliable assistant"
         " that answers questions about health."
@@ -235,7 +235,7 @@ def hitl_health_bot(graph: CompiledStateGraph):
         print(f"\n--- Starting new session (session ID: {thread_id}) ---\n")
 
         # Get a topic from the user and start the research
-        user_question = input("\nWhat topic would you like to learn about?\n"
+        user_question = input("What topic would you like to learn about?\n"
                               "> ")
 
         # Make sure they enter anything
@@ -264,8 +264,8 @@ def hitl_health_bot(graph: CompiledStateGraph):
 
                     # Print the message only if it hasn't been yet
                     if (message.id != last_printed_message_id and
-                        message.type == "ai" and
-                        message.content):
+                            message.type == "ai" and
+                            message.content):
 
                         message.pretty_print()
                         last_printed_message_id = message.id
@@ -283,7 +283,7 @@ def hitl_health_bot(graph: CompiledStateGraph):
             # if they're interested
             if next_node == "ask_for_quiz":
                 # Start the quiz loop if the user wants to
-                quiz_requested = input("Would you like to do a quiz? (y/n)\n"
+                quiz_requested = input("\nWould you like to do a quiz? (y/n)\n"
                                        "> ")
                 choice = "yes" if (quiz_requested.lower().strip()
                                    in ["y", "yes"]) else "no"
@@ -293,7 +293,7 @@ def hitl_health_bot(graph: CompiledStateGraph):
             # Capture the answer to the quiz
             elif next_node == "grade_quiz":
                 # Get the user's answer and make sure it's long enough
-                quiz_answer = input("Please state your answer\n"
+                quiz_answer = input("Please state your answer:\n"
                                     "> ")
                 while not quiz_answer.strip() or len(quiz_answer) < 5:
                     quiz_answer = input(
@@ -304,7 +304,7 @@ def hitl_health_bot(graph: CompiledStateGraph):
                 graph.update_state(config, {"quiz_answer": quiz_answer})
 
             elif next_node == "ask_for_new_topic":
-                new_topic_choice = input("Research another topic? (y/n)\n> ")
+                new_topic_choice = input("\nResearch another topic? (y/n)\n> ")
                 choice = "yes" if new_topic_choice.lower().strip() in [
                     "y", "yes"] else "no"
                 graph.update_state(config, {"new_topic_choice": choice})
