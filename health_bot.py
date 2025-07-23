@@ -70,10 +70,9 @@ def agent(state: State):
     return {"messages": [ai_message]}
 
 
-def router(state: State):
+def route_to_tool(state: State):
     last_message = state["messages"][-1]
 
-    # TODO handle multiple tool calls
     if last_message.tool_calls:
         return "web_search"
     else:
@@ -162,7 +161,9 @@ workflow.add_edge(START, "entry_point")
 workflow.add_edge("entry_point", "agent")
 
 workflow.add_conditional_edges(
-    source="agent", path=router, path_map=["web_search", END]
+    source="agent",
+    path=route_to_tool,
+    path_map=["web_search", END]
 )
 
 workflow.add_edge("web_search", "summarize")
