@@ -264,7 +264,10 @@ def hitl_health_bot(graph: CompiledStateGraph):
                     message = messages[-1]
 
                     # Print the message only if it hasn't been yet
-                    if message.id != last_printed_message_id:
+                    if (message.id != last_printed_message_id and
+                        message.type == "ai" and
+                        message.content):
+
                         message.pretty_print()
                         last_printed_message_id = message.id
 
