@@ -220,6 +220,7 @@ def hitl_health_bot(graph: CompiledStateGraph):
 
         if quiz_requested.lower() in ["yes", "y"]:
 
+            # Quiz was requested, generate a question
             for event in graph.stream(input=None, config=config,
                                       stream_mode="values"):
                 if event.get("messages"):
@@ -228,9 +229,16 @@ def hitl_health_bot(graph: CompiledStateGraph):
                         message.pretty_print()
                         last_printed_message_id = message.id
 
-            # Get and grade the user's answer
+            # Get the user's answer and make sure it's long enough
             quiz_answer = input("Please state your answer\n"
                                 "> ")
+            while not quiz_answer.strip() or len(quiz_answer) < 5:
+                quiz_answer = input(
+                    "It looks like you haven't entered an answer. Please "
+                    "try again.\n"
+                    "> ")
+
+            # Continue with grading the answer
             graph.update_state(config, {"quiz_answer": quiz_answer})
 
             for event in graph.stream(input=None,
@@ -242,10 +250,10 @@ def hitl_health_bot(graph: CompiledStateGraph):
                         message.pretty_print()
                         last_printed_message_id = message.id
 
+        # Restart with another topic or exit
         user_proceeds = input("Would you like to talk about another topic ("
                               "y/n)?\n"
                               "> ")
-        # user_proceeds = "n"
         if user_proceeds.lower() not in ["yes", "y"]:
             print("\nExiting.")
             break
