@@ -5,6 +5,8 @@
 mlruns
 .history
 .idea
+.ipynb_checkpoints
+.jupyter
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
