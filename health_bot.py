@@ -53,6 +53,7 @@ class State(MessagesState):
 
 
 def entry_point(state: State):
+    # Starting node
 
     system_message = SystemMessage(
         "You are a health bot. You are a helpful and reliable assistant"
@@ -68,11 +69,15 @@ def entry_point(state: State):
 
 
 def agent(state: State):
+    # Research agent
+
     ai_message = llm.invoke(state["messages"])
     return {"messages": [ai_message]}
 
 
 def route_to_tool(state: State):
+    # Routes to web search tool
+
     last_message = state["messages"][-1]
 
     if last_message.tool_calls:
@@ -95,6 +100,8 @@ def web_search(query: str) -> Dict:
 
 
 def summarize(state: State):
+    # Summarize web search
+
     system_message = SystemMessage(
         "Summarize the search results from the web search tool into a "
         "coherent,"
@@ -106,25 +113,23 @@ def summarize(state: State):
 
 
 def ask_for_quiz(state: State):
-    # This is a breakpoint to ask the user for input
+    # This is a breakpoint to ask the user for input. Doesn't do anything else.
 
     return state
 
 
 def route_to_quiz(state: State):
-    """
-    Checks the user's decision from the state and routes accordingly.
-    This runs AFTER the human-in-the-loop step.
-    """
+    # Checks the user's decision from the state and routes accordingly.
+
     if state.get("quiz_choice") == "yes":
         return "generate_quiz"
     else:
-        # If they said no, or if something went wrong, end the quiz flow.
+        # If they said no, ask if they want a new topic
         return "ask_for_new_topic"
 
 
 def ask_for_new_topic(state: State):
-    # This is a breakpoint to ask the user is they want to continue
+    # This is a breakpoint to ask the user for input. Doesn't do anything else.
 
     return state
 
@@ -165,7 +170,7 @@ def grade_quiz(state: State):
         "summaries provided above"
     )
 
-    # Don't need full context here as we're only grading
+    # Don't need the full message history here as we're only grading
     ai_message = llm.invoke([system_message])
 
     return {"messages": [ai_message]}
@@ -189,6 +194,7 @@ workflow.add_node("ask_for_new_topic", ask_for_new_topic)
 workflow.add_edge(START, "entry_point")
 workflow.add_edge("entry_point", "agent")
 
+# Routes to web search tool
 workflow.add_conditional_edges(
     source="agent",
     path=route_to_tool,
@@ -196,8 +202,11 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_edge("web_search", "summarize")
+
+# At this point, we interrupt and ask if they want a quiz
 workflow.add_edge("summarize", "ask_for_quiz")
 
+# Check if they wanted a quiz and route
 workflow.add_conditional_edges(
     source="ask_for_quiz",
     path=route_to_quiz,
@@ -208,9 +217,9 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_edge("generate_quiz", "grade_quiz")
-workflow.add_edge("grade_quiz", "ask_for_new_topic")
 
-# This will interrupt so we can ask the user if they want to continue
+# At this point, we interrupt and ask if they want a new topic
+workflow.add_edge("grade_quiz", "ask_for_new_topic")
 workflow.add_edge("ask_for_new_topic", END)
 
 memory = MemorySaver()
@@ -218,7 +227,7 @@ graph = workflow.compile(
     interrupt_before=["ask_for_quiz", "ask_for_new_topic", "grade_quiz"],
     checkpointer=memory)
 
-# draw the graph for inspection/debugging
+# Draw the graph for inspection/debugging
 png_bytes = graph.get_graph().draw_mermaid_png()
 with open("health_bot_workflow.png", "wb") as f:
     f.write(png_bytes)
@@ -234,11 +243,9 @@ def hitl_health_bot(graph: CompiledStateGraph):
         thread_id += 1
         print(f"\n--- Starting new session (session ID: {thread_id}) ---\n")
 
-        # Get a topic from the user and start the research
+        # Get a topic from the user and make sure they've entered something
         user_question = input("What topic would you like to learn about?\n"
                               "> ")
-
-        # Make sure they enter anything
         if not user_question.strip():
             print("OK, see you later then!")
             break
@@ -247,7 +254,7 @@ def hitl_health_bot(graph: CompiledStateGraph):
         config = RunnableConfig()
         config["configurable"] = {"thread_id": thread_id}
 
-        # Need to keep track of which messages we're printing
+        # Need to keep track of printed messages to avoid duplicates
         last_printed_message_id = None
 
         # This holds the input for the graph
@@ -264,13 +271,13 @@ def hitl_health_bot(graph: CompiledStateGraph):
 
                     # Print the message only if it hasn't been yet
                     if (message.id != last_printed_message_id and
+                            # Only print AI messages
                             message.type == "ai" and
                             message.content):
-
                         message.pretty_print()
                         last_printed_message_id = message.id
 
-            # As soon as an interrupt happens, check what's up next
+            # As soon as an interrupt happens, check which node is next
             state = graph.get_state(config)
             next_node = state.next[0] if state.next else None
 
@@ -279,8 +286,7 @@ def hitl_health_bot(graph: CompiledStateGraph):
                 # print("\n--- See you later! ---\n")
                 break
 
-            # The graph is about to enter the quiz section - ask the user
-            # if they're interested
+            # Ask if the user wants a quiz
             if next_node == "ask_for_quiz":
                 # Start the quiz loop if the user wants to
                 quiz_requested = input("\nWould you like to do a quiz? (y/n)\n"
@@ -288,6 +294,7 @@ def hitl_health_bot(graph: CompiledStateGraph):
                 choice = "yes" if (quiz_requested.lower().strip()
                                    in ["y", "yes"]) else "no"
 
+                # Update the graph state so the router knows what to do
                 graph.update_state(config, {"quiz_choice": choice})
 
             # Capture the answer to the quiz
@@ -303,6 +310,7 @@ def hitl_health_bot(graph: CompiledStateGraph):
 
                 graph.update_state(config, {"quiz_answer": quiz_answer})
 
+            # Ask the user if they want a new topic
             elif next_node == "ask_for_new_topic":
                 new_topic_choice = input("\nResearch another topic? (y/n)\n> ")
                 choice = "yes" if new_topic_choice.lower().strip() in [
@@ -313,6 +321,8 @@ def hitl_health_bot(graph: CompiledStateGraph):
             # Hence we need to make sure the graph's input will be empty
             current_input = None
 
+        # If the user answered they don't want a new topic, we'll end the
+        # outer loop and the program stops
         final_state = graph.get_state(config)
         if final_state.values.get("new_topic_choice") == "no":
             print("Got it, goodbye!")
