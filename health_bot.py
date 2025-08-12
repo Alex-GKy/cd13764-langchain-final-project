@@ -36,7 +36,8 @@ llm = ChatOpenAI(
 class UserInputRequest:
     """Represents a request for user input that the UI should handle"""
     prompt: str
-    input_type: str  # "quiz_choice", "quiz_answer", "new_topic_choice", "new_question"
+    input_type: str  # "quiz_choice", "quiz_answer", "new_topic_choice",
+    # "new_question"
     options: list = None  # For multiple choice questions
 
 
@@ -254,127 +255,6 @@ class HealthBotSession:
         self.config["configurable"] = {"thread_id": self.thread_id}
         self.last_printed_message_id = None
         self.initial_question = initial_question
-        self.started = False
-
-    def get_next_response(self) -> Union[str, UserInputRequest, None]:
-        """Process one step and return what the UI should do next"""
-
-        # For the first call, we need to start with input
-        if not self.started:
-            input_data = {"user_question": self.initial_question}
-            self.started = True
-        else:
-            input_data = None
-
-        # Stream the graph until it stops (interrupt or end)
-        for event in graph.stream(input=input_data, config=self.config,
-                                  stream_mode="values"):
-            if messages := event.get("messages", []):
-                message = messages[-1]
-                if (message.id != self.last_printed_message_id and
-                        message.type == "ai" and
-                        message.content):
-                    self.last_printed_message_id = message.id
-                    return message.content  # Return AI message
-
-        # Check what's next after streaming stops
-        state = graph.get_state(self.config)
-        next_node = state.next[0] if state.next else None
-
-        if not next_node or next_node == END:
-            return None  # Conversation done
-
-        # Return appropriate input request
-        if next_node == "ask_for_quiz":
-            return UserInputRequest(
-                prompt="Would you like to do a quiz?",
-                input_type="quiz_choice",
-                options=["yes", "no"]
-            )
-        elif next_node == "grade_quiz":
-            return UserInputRequest(
-                prompt="Please state your answer:",
-                input_type="quiz_answer"
-            )
-        elif next_node == "ask_for_new_topic":
-            return UserInputRequest(
-                prompt="Research another topic?",
-                input_type="new_topic_choice",
-                options=["yes", "no"]
-            )
-        elif next_node == "ask_topic_question":
-            return UserInputRequest(
-                prompt="What health topic would you like to research?",
-                input_type="new_question"
-            )
-
-    def handle_user_response(self, response: str, input_type: str):
-        """Handle user input and update graph state"""
-        if input_type == "quiz_choice":
-            choice = "yes" if response.lower().strip() in ["y",
-                                                           "yes"] else "no"
-            graph.update_state(self.config, {"quiz_choice": choice})
-
-        elif input_type == "quiz_answer":
-            graph.update_state(self.config, {"quiz_answer": response})
-
-        elif input_type == "new_topic_choice":
-            choice = "yes" if response.lower().strip() in ["y",
-                                                           "yes"] else "no"
-            graph.update_state(self.config, {"new_topic_choice": choice})
-
-        elif input_type == "new_question":
-            # For new questions, we need to reset and restart
-            self.initial_question = response
-            self.started = False
-            self.last_printed_message_id = None
-            # Clear the thread to start fresh
-            self.thread_id = str(uuid.uuid4())
-            self.config["configurable"]["thread_id"] = self.thread_id
-
-
-# Legacy generator function for backwards compatibility
-def streamlit_health_bot(initial_question: str):
-    """
-    Legacy generator interface - creates a session and yields responses.
-    Use HealthBotSession directly for better control.
-    """
-    session = HealthBotSession(initial_question)
-
-    while True:
-        response = session.get_next_response()
-
-        if response is None:
-            break
-        elif isinstance(response, str):
-            yield response
-        elif isinstance(response, UserInputRequest):
-            user_input = yield response
-            session.handle_user_response(user_input, response.input_type)
-
-
-# For backwards compatibility and testing
-if __name__ == "__main__":
-    print("Health bot module loaded. Use agent_runner.py to run the bot.")
-
-
-####
-# Variant with generator
-####
-
-
-class HealthBotSession:
-    """
-    Session-based health bot that processes one step at a time.
-    The graph manages the flow, we just translate states to UI actions.
-    """
-
-    def __init__(self, initial_question: str):
-        self.thread_id = str(uuid.uuid4())
-        self.config = RunnableConfig()
-        self.config["configurable"] = {"thread_id": self.thread_id}
-        self.last_printed_message_id = None
-        self.initial_question = initial_question
 
     def run_conversation(self):
         """Generator that yields AI messages and UserInputRequests, expects
@@ -409,7 +289,8 @@ class HealthBotSession:
                     options=["yes", "no"]
                 )
                 choice = "yes" if user_response.lower().strip() in ["y",
-                                                                    "yes"] else "no"
+                                                                    "yes"] \
+                    else "no"
                 graph.update_state(self.config, {"quiz_choice": choice})
                 input_data = None  # No new input data needed, just continue
 
@@ -428,7 +309,8 @@ class HealthBotSession:
                     options=["yes", "no"]
                 )
                 choice = "yes" if user_response.lower().strip() in ["y",
-                                                                    "yes"] else "no"
+                                                                    "yes"] \
+                    else "no"
                 graph.update_state(self.config, {"new_topic_choice": choice})
                 input_data = None
 
