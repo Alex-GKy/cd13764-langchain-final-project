@@ -3,13 +3,12 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph.state import CompiledStateGraph
 from langgraph.graph import StateGraph, MessagesState, START, END, add_messages
 from langgraph.prebuilt import ToolNode
+from langchain_core.messages import AIMessage
 from tavily import TavilyClient
 from typing import Dict, Union
 from dataclasses import dataclass
-import dotenv_loader
 import os
 import mlflow
 import uuid
@@ -97,7 +96,8 @@ def summarize(state: State):
     system_message = SystemMessage(
         "Summarize the search results from the web search tool into a "
         "coherent,"
-        "helpful response, spanning 3-4 paragraphs."
+        "helpful response, spanning 2-3 paragraphs."
+        "Make sure to use at least 3 sources."
         "Cite your sources."
     )
     ai_message = llm.invoke(state["messages"] + [system_message])
@@ -167,8 +167,14 @@ def grade_quiz(state: State):
 
     # Don't need the full message history here as we're only grading
     ai_message = llm.invoke([system_message])
+    
+    # Modify the message content by adding the congratulatory line at the start
+    modified_content = f"🎉 Well done! Here's how I grade your answer and an explanation:\n\n{ai_message.content}"
+    
+    # Create a new message with the modified content
+    modified_message = AIMessage(content=modified_content)
 
-    return {"messages": [ai_message]}
+    return {"messages": [modified_message]}
 
 
 # bind tools
@@ -284,9 +290,9 @@ class HealthBotSession:
             # Yield appropriate input request and wait for user response
             if next_node == "ask_for_quiz":
                 user_response = yield UserInputRequest(
-                    prompt="Would you like to do a quiz?",
+                    prompt="Would you like to do a quiz about this topic?",
                     input_type="quiz_choice",
-                    options=["yes", "no"]
+                    options=["Yes", "No"]
                 )
                 choice = "yes" if user_response.lower().strip() in ["y",
                                                                     "yes"] \
@@ -304,7 +310,7 @@ class HealthBotSession:
 
             elif next_node == "ask_for_new_topic":
                 user_response = yield UserInputRequest(
-                    prompt="Research another topic?",
+                    prompt="Would you like to discuss another topic?",
                     input_type="new_topic_choice",
                     options=["yes", "no"]
                 )
@@ -316,7 +322,7 @@ class HealthBotSession:
 
             elif next_node == "ask_topic_question":
                 user_response = yield UserInputRequest(
-                    prompt="What health topic would you like to research?",
+                    prompt="What health topic would you like me to research?",
                     input_type="new_question"
                 )
                 # For new questions, we reset and restart with new input
