@@ -7,10 +7,12 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.graph import StateGraph, MessagesState, START, END, add_messages
 from langgraph.prebuilt import ToolNode
 from tavily import TavilyClient
-from typing import Dict
+from typing import Dict, Union
+from dataclasses import dataclass
 import dotenv_loader
 import os
 import mlflow
+import uuid
 
 # MLFlow setup
 try:
@@ -21,13 +23,21 @@ try:
 except:
     print("MLflow server not running. Proceeding without MLflow.")
 
-
-base_url = "https://openai.vocareum.com/v1"
+# base_url = "https://openai.vocareum.com/v1"
+base_url = "https://api.openai.com/v1"
 llm = ChatOpenAI(
     model="gpt-4o-mini",
     temperature=0.2,
     base_url=base_url
 )
+
+
+@dataclass
+class UserInputRequest:
+    """Represents a request for user input that the UI should handle"""
+    prompt: str
+    input_type: str  # "quiz_choice", "quiz_answer", "new_topic_choice", "new_question"
+    options: list = None  # For multiple choice questions
 
 
 class State(MessagesState):
@@ -41,7 +51,6 @@ class State(MessagesState):
 
 def entry_point(state: State):
     # Starting node
-
     system_message = SystemMessage(
         "You are a health bot. You are a helpful and reliable assistant"
         " that answers questions about health."
@@ -58,14 +67,12 @@ def entry_point(state: State):
 
 def agent(state: State):
     # Research agent
-
     ai_message = llm.invoke(state["messages"])
     return {"messages": [ai_message]}
 
 
 def route_to_tool(state: State):
     # Routes to web search tool
-
     last_message = state["messages"][-1]
 
     if last_message.tool_calls:
@@ -79,7 +86,6 @@ def web_search(query: str) -> Dict:
     """
      Return top web search results for a given search query
      """
-
     tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
     response = tavily_client.search(query)
     return response
@@ -87,7 +93,6 @@ def web_search(query: str) -> Dict:
 
 def summarize(state: State):
     # Summarize web search
-
     system_message = SystemMessage(
         "Summarize the search results from the web search tool into a "
         "coherent,"
@@ -100,13 +105,11 @@ def summarize(state: State):
 
 def ask_for_quiz(state: State):
     # This is a breakpoint to ask the user for input. Doesn't do anything else.
-
     return state
 
 
 def route_to_quiz(state: State):
     # Checks the user's decision from the state and routes accordingly.
-
     if state.get("quiz_choice") == "yes":
         return "generate_quiz"
     else:
@@ -116,7 +119,19 @@ def route_to_quiz(state: State):
 
 def ask_for_new_topic(state: State):
     # This is a breakpoint to ask the user for input. Doesn't do anything else.
+    return state
 
+
+def route_to_new_topic(state: State):
+    # Checks the user's decision and routes accordingly
+    if state.get("new_topic_choice") == "yes":
+        return "ask_topic_question"
+    else:
+        return END
+
+
+def ask_topic_question(state: State):
+    # This is a breakpoint to ask for the new topic question
     return state
 
 
@@ -168,6 +183,7 @@ workflow.add_node("generate_quiz", generate_quiz)
 workflow.add_node("grade_quiz", grade_quiz)
 workflow.add_node("ask_for_quiz", ask_for_quiz)
 workflow.add_node("ask_for_new_topic", ask_for_new_topic)
+workflow.add_node("ask_topic_question", ask_topic_question)
 
 # Start
 workflow.add_edge(START, "entry_point")
@@ -199,11 +215,24 @@ workflow.add_edge("generate_quiz", "grade_quiz")
 
 # At this point, we interrupt and ask if they want a new topic
 workflow.add_edge("grade_quiz", "ask_for_new_topic")
-workflow.add_edge("ask_for_new_topic", END)
+
+# Route based on new topic choice
+workflow.add_conditional_edges(
+    source="ask_for_new_topic",
+    path=route_to_new_topic,
+    path_map={
+        "ask_topic_question": "ask_topic_question",
+        END: END
+    }
+)
+
+# Loop back to entry_point with new question
+workflow.add_edge("ask_topic_question", "entry_point")
 
 memory = MemorySaver()
 graph = workflow.compile(
-    interrupt_before=["ask_for_quiz", "ask_for_new_topic", "grade_quiz"],
+    interrupt_before=["ask_for_quiz", "ask_for_new_topic", "grade_quiz",
+                      "ask_topic_question"],
     checkpointer=memory
 )
 
@@ -213,186 +242,117 @@ with open("health_bot_workflow.png", "wb") as f:
     f.write(png_bytes)
 
 
-def hitl_health_bot(graph: CompiledStateGraph):
-    # We'll start a new thread for each run of the graph
-    thread_id = 0
-
-    # Outer loop, each run is one separate conversation
-    while True:
-
-        thread_id += 1
-        print(f"\n--- Starting new session (session ID: {thread_id}) ---\n")
-
-        # Get a topic from the user and make sure they've entered something
-        user_question = input("What topic would you like to learn about?\n"
-                              "> ")
-        if not user_question.strip():
-            print("OK, see you later then!")
-            break
-
-        # Not a must but for keeping types consistent
-        config = RunnableConfig()
-        config["configurable"] = {"thread_id": thread_id}
-
-        # Need to keep track of printed messages to avoid duplicates
-        last_printed_message_id = None
-
-        # This holds the input for the graph
-        current_input = {"user_question": user_question}
-
-        # This is the inner loop, representing one run of the graph
-        # Basically, this keeps calling graph.stream and handles interrupts
-        while True:
-            for event in graph.stream(input=current_input,
-                                      config=config,
-                                      stream_mode="values"):
-                if messages := event.get("messages", []):
-                    message = messages[-1]
-
-                    # Print the message only if it hasn't been yet
-                    if (message.id != last_printed_message_id and
-                            # Only print AI messages
-                            message.type == "ai" and
-                            message.content):
-                        message.pretty_print()
-                        last_printed_message_id = message.id
-
-            # As soon as an interrupt happens, check which node is next
-            state = graph.get_state(config)
-            next_node = state.next[0] if state.next else None
-
-            # Check if we've reached the end
-            if not state.next or state.next[0] == END:
-                # print("\n--- See you later! ---\n")
-                break
-
-            # Ask if the user wants a quiz
-            if next_node == "ask_for_quiz":
-                # Start the quiz loop if the user wants to
-                quiz_requested = input("\nWould you like to do a quiz? (y/n)\n"
-                                       "> ")
-                choice = "yes" if (quiz_requested.lower().strip()
-                                   in ["y", "yes"]) else "no"
-
-                # Update the graph state so the router knows what to do
-                graph.update_state(config, {"quiz_choice": choice})
-
-            # Capture the answer to the quiz
-            elif next_node == "grade_quiz":
-                # Get the user's answer and make sure it's long enough
-                quiz_answer = input("Please state your answer:\n"
-                                    "> ")
-                while not quiz_answer.strip() or len(quiz_answer) < 5:
-                    quiz_answer = input(
-                        "It looks like you haven't entered an answer. Please "
-                        "try again.\n"
-                        "> ")
-
-                graph.update_state(config, {"quiz_answer": quiz_answer})
-
-            # Ask the user if they want a new topic
-            elif next_node == "ask_for_new_topic":
-                new_topic_choice = input("\nResearch another topic? (y/n)\n> ")
-                choice = "yes" if new_topic_choice.lower().strip() in [
-                    "y", "yes"] else "no"
-                graph.update_state(config, {"new_topic_choice": choice})
-
-            # After this, the inner loop will run again and continue the stream
-            # Hence we need to make sure the graph's input will be empty
-            current_input = None
-
-        # If the user answered they don't want a new topic, we'll end the
-        # outer loop and the program stops
-        final_state = graph.get_state(config)
-        if final_state.values.get("new_topic_choice") == "no":
-            print("Got it, goodbye!")
-            break
-
-
-if __name__ == "__main__":
-    hitl_health_bot(graph=graph)
-
-
-#######
-# Alternative runner for streaming
-#######
-
-from typing import Iterator, Union, Dict, Any
-from dataclasses import dataclass
-
-@dataclass
-class UserInputRequest:
-    """Represents a request for user input that the UI should handle"""
-    prompt: str
-    input_type: str  # "quiz_choice", "quiz_answer", "new_topic_choice"
-    options: list = None  # For multiple choice questions
-
-def streamlit_health_bot(initial_question: str) -> Iterator[Union[str, UserInputRequest]]:
+class HealthBotSession:
     """
-    Generator version of the health bot that yields either:
-    - str: Assistant messages to display
-    - UserInputRequest: Requests for user input that the UI should handle
-    
-    Send user responses back using generator.send(response)
+    Session-based health bot that processes one step at a time.
+    The graph manages the flow, we just translate states to UI actions.
     """
-    import uuid
-    from langchain_core.runnables import RunnableConfig
-    from langgraph.graph import END
-    
-    thread_id = str(uuid.uuid4())
-    config = RunnableConfig()
-    config["configurable"] = {"thread_id": thread_id}
-    
-    current_input = {"user_question": initial_question}
-    last_printed_message_id = None
-    
-    while True:
-        # Stream the graph
-        for event in graph.stream(input=current_input, config=config, stream_mode="values"):
+
+    def __init__(self, initial_question: str):
+        self.thread_id = str(uuid.uuid4())
+        self.config = RunnableConfig()
+        self.config["configurable"] = {"thread_id": self.thread_id}
+        self.last_printed_message_id = None
+        self.initial_question = initial_question
+        self.started = False
+
+    def get_next_response(self) -> Union[str, UserInputRequest, None]:
+        """Process one step and return what the UI should do next"""
+
+        # For the first call, we need to start with input
+        if not self.started:
+            input_data = {"user_question": self.initial_question}
+            self.started = True
+        else:
+            input_data = None
+
+        # Stream the graph until it stops (interrupt or end)
+        for event in graph.stream(input=input_data, config=self.config,
+                                  stream_mode="values"):
             if messages := event.get("messages", []):
                 message = messages[-1]
-                if (message.id != last_printed_message_id and 
-                    message.type == "ai" and 
-                    message.content):
-                    yield message.content  # Yield assistant message
-                    last_printed_message_id = message.id
-        
-        # Check what's next
-        state = graph.get_state(config)
+                if (message.id != self.last_printed_message_id and
+                        message.type == "ai" and
+                        message.content):
+                    self.last_printed_message_id = message.id
+                    return message.content  # Return AI message
+
+        # Check what's next after streaming stops
+        state = graph.get_state(self.config)
         next_node = state.next[0] if state.next else None
-        
-        if not state.next or next_node == END:
-            break
-            
-        # Handle interrupts by yielding input requests instead of blocking
+
+        if not next_node or next_node == END:
+            return None  # Conversation done
+
+        # Return appropriate input request
         if next_node == "ask_for_quiz":
-            user_response = yield UserInputRequest(
+            return UserInputRequest(
                 prompt="Would you like to do a quiz?",
                 input_type="quiz_choice",
                 options=["yes", "no"]
             )
-            choice = "yes" if user_response.lower().strip() in ["y", "yes"] else "no"
-            graph.update_state(config, {"quiz_choice": choice})
-            
         elif next_node == "grade_quiz":
-            user_response = yield UserInputRequest(
+            return UserInputRequest(
                 prompt="Please state your answer:",
                 input_type="quiz_answer"
             )
-            graph.update_state(config, {"quiz_answer": user_response})
-            
         elif next_node == "ask_for_new_topic":
-            user_response = yield UserInputRequest(
+            return UserInputRequest(
                 prompt="Research another topic?",
-                input_type="new_topic_choice", 
+                input_type="new_topic_choice",
                 options=["yes", "no"]
             )
-            choice = "yes" if user_response.lower().strip() in ["y", "yes"] else "no"
-            graph.update_state(config, {"new_topic_choice": choice})
-            
-            # If they said no, we're done
-            if choice == "no":
-                break
-        
-        # Continue with empty input for next iteration
-        current_input = None
+        elif next_node == "ask_topic_question":
+            return UserInputRequest(
+                prompt="What health topic would you like to research?",
+                input_type="new_question"
+            )
+
+    def handle_user_response(self, response: str, input_type: str):
+        """Handle user input and update graph state"""
+        if input_type == "quiz_choice":
+            choice = "yes" if response.lower().strip() in ["y",
+                                                           "yes"] else "no"
+            graph.update_state(self.config, {"quiz_choice": choice})
+
+        elif input_type == "quiz_answer":
+            graph.update_state(self.config, {"quiz_answer": response})
+
+        elif input_type == "new_topic_choice":
+            choice = "yes" if response.lower().strip() in ["y",
+                                                           "yes"] else "no"
+            graph.update_state(self.config, {"new_topic_choice": choice})
+
+        elif input_type == "new_question":
+            # For new questions, we need to reset and restart
+            self.initial_question = response
+            self.started = False
+            self.last_printed_message_id = None
+            # Clear the thread to start fresh
+            self.thread_id = str(uuid.uuid4())
+            self.config["configurable"]["thread_id"] = self.thread_id
+
+
+# Legacy generator function for backwards compatibility
+def streamlit_health_bot(initial_question: str):
+    """
+    Legacy generator interface - creates a session and yields responses.
+    Use HealthBotSession directly for better control.
+    """
+    session = HealthBotSession(initial_question)
+
+    while True:
+        response = session.get_next_response()
+
+        if response is None:
+            break
+        elif isinstance(response, str):
+            yield response
+        elif isinstance(response, UserInputRequest):
+            user_input = yield response
+            session.handle_user_response(user_input, response.input_type)
+
+
+# For backwards compatibility and testing
+if __name__ == "__main__":
+    print("Health bot module loaded. Use agent_runner.py to run the bot.")

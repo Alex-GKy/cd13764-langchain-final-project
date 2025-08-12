@@ -84,12 +84,20 @@ if st.session_state.awaiting_input:
         with st.form(f"form_{input_req.input_type}", clear_on_submit=True):
             choice = st.radio("Choose an option:", input_req.options, index=0)
             if st.form_submit_button("Submit"):
+                # If this is a new topic request, add the user's choice to the message history
+                if input_req.input_type == "new_topic_choice":
+                    st.session_state.messages.append({"role": "user", "content": choice})
                 continue_bot_conversation(choice)
                 st.rerun()
     else:
-        # Free text input
+        # Free text input (includes new topic requests)
         with st.form(f"form_{input_req.input_type}", clear_on_submit=True):
-            answer = st.text_area("Your response:")
+            if input_req.input_type == "new_topic":
+                answer = st.text_input("Enter your new health topic:")
+            else:
+                answer = st.text_area("Your response:")
             if st.form_submit_button("Submit") and answer.strip():
+                # Add user's response to message history
+                st.session_state.messages.append({"role": "user", "content": answer.strip()})
                 continue_bot_conversation(answer.strip())
                 st.rerun()
