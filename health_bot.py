@@ -128,7 +128,17 @@ def route_to_new_topic(state: State):
     if state.get("new_topic_choice") == "yes":
         return "ask_topic_question"
     else:
-        return END
+        return "goodbye_message"
+
+
+def goodbye_message(state: State):
+    # Generate a friendly goodbye message
+    farewell_content = "👋 Thank you for using HealthBot! I hope the information was helpful. Take care of your health, and feel free to come back anytime you have more health questions. Stay well! 🌟"
+    
+    # Create goodbye message
+    goodbye_msg = AIMessage(content=farewell_content)
+    
+    return {"messages": [goodbye_msg]}
 
 
 def ask_topic_question(state: State):
@@ -191,6 +201,7 @@ workflow.add_node("grade_quiz", grade_quiz)
 workflow.add_node("ask_for_quiz", ask_for_quiz)
 workflow.add_node("ask_for_new_topic", ask_for_new_topic)
 workflow.add_node("ask_topic_question", ask_topic_question)
+workflow.add_node("goodbye_message", goodbye_message)
 
 # Start
 workflow.add_edge(START, "entry_point")
@@ -229,12 +240,15 @@ workflow.add_conditional_edges(
     path=route_to_new_topic,
     path_map={
         "ask_topic_question": "ask_topic_question",
-        END: END
+        "goodbye_message": "goodbye_message"
     }
 )
 
 # Loop back to entry_point with new question
 workflow.add_edge("ask_topic_question", "entry_point")
+
+# Add edge from goodbye to END:
+workflow.add_edge("goodbye_message", END)
 
 memory = MemorySaver()
 graph = workflow.compile(
@@ -312,7 +326,7 @@ class HealthBotSession:
                 user_response = yield UserInputRequest(
                     prompt="Would you like to discuss another topic?",
                     input_type="new_topic_choice",
-                    options=["yes", "no"]
+                    options=["Yes", "No"]
                 )
                 choice = "yes" if user_response.lower().strip() in ["y",
                                                                     "yes"] \
