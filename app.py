@@ -1,9 +1,4 @@
 import streamlit as st
-import os
-
-# Set up API key
-if "VOCAREUM_API_KEY" in st.secrets and "OPENAI_API_KEY" not in os.environ:
-    os.environ["OPENAI_API_KEY"] = st.secrets["VOCAREUM_API_KEY"]
 
 from health_bot import streamlit_health_bot, UserInputRequest
 
