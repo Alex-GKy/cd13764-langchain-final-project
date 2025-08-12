@@ -12,7 +12,6 @@ import dotenv_loader
 import os
 import mlflow
 
-
 # MLFlow setup
 try:
     mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI",
@@ -205,7 +204,8 @@ workflow.add_edge("ask_for_new_topic", END)
 memory = MemorySaver()
 graph = workflow.compile(
     interrupt_before=["ask_for_quiz", "ask_for_new_topic", "grade_quiz"],
-    checkpointer=memory)
+    checkpointer=memory
+)
 
 # Draw the graph for inspection/debugging
 png_bytes = graph.get_graph().draw_mermaid_png()
@@ -311,3 +311,88 @@ def hitl_health_bot(graph: CompiledStateGraph):
 
 if __name__ == "__main__":
     hitl_health_bot(graph=graph)
+
+
+#######
+# Alternative runner for streaming
+#######
+
+from typing import Iterator, Union, Dict, Any
+from dataclasses import dataclass
+
+@dataclass
+class UserInputRequest:
+    """Represents a request for user input that the UI should handle"""
+    prompt: str
+    input_type: str  # "quiz_choice", "quiz_answer", "new_topic_choice"
+    options: list = None  # For multiple choice questions
+
+def streamlit_health_bot(initial_question: str) -> Iterator[Union[str, UserInputRequest]]:
+    """
+    Generator version of the health bot that yields either:
+    - str: Assistant messages to display
+    - UserInputRequest: Requests for user input that the UI should handle
+    
+    Send user responses back using generator.send(response)
+    """
+    import uuid
+    from langchain_core.runnables import RunnableConfig
+    from langgraph.graph import END
+    
+    thread_id = str(uuid.uuid4())
+    config = RunnableConfig()
+    config["configurable"] = {"thread_id": thread_id}
+    
+    current_input = {"user_question": initial_question}
+    last_printed_message_id = None
+    
+    while True:
+        # Stream the graph
+        for event in graph.stream(input=current_input, config=config, stream_mode="values"):
+            if messages := event.get("messages", []):
+                message = messages[-1]
+                if (message.id != last_printed_message_id and 
+                    message.type == "ai" and 
+                    message.content):
+                    yield message.content  # Yield assistant message
+                    last_printed_message_id = message.id
+        
+        # Check what's next
+        state = graph.get_state(config)
+        next_node = state.next[0] if state.next else None
+        
+        if not state.next or next_node == END:
+            break
+            
+        # Handle interrupts by yielding input requests instead of blocking
+        if next_node == "ask_for_quiz":
+            user_response = yield UserInputRequest(
+                prompt="Would you like to do a quiz?",
+                input_type="quiz_choice",
+                options=["yes", "no"]
+            )
+            choice = "yes" if user_response.lower().strip() in ["y", "yes"] else "no"
+            graph.update_state(config, {"quiz_choice": choice})
+            
+        elif next_node == "grade_quiz":
+            user_response = yield UserInputRequest(
+                prompt="Please state your answer:",
+                input_type="quiz_answer"
+            )
+            graph.update_state(config, {"quiz_answer": user_response})
+            
+        elif next_node == "ask_for_new_topic":
+            user_response = yield UserInputRequest(
+                prompt="Research another topic?",
+                input_type="new_topic_choice", 
+                options=["yes", "no"]
+            )
+            choice = "yes" if user_response.lower().strip() in ["y", "yes"] else "no"
+            graph.update_state(config, {"new_topic_choice": choice})
+            
+            # If they said no, we're done
+            if choice == "no":
+                break
+        
+        # Continue with empty input for next iteration
+        current_input = None
