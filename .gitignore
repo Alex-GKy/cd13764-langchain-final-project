@@ -5,6 +5,7 @@
 mlruns
 .history
 .idea
+secrets.toml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
