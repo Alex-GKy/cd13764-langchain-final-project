@@ -14,7 +14,7 @@ import mlflow
 import uuid
 from langchain_core.tools import tool
 from health_rag_service import health_rag
-from typing import Optional
+from prompt_library import get_system_prompt
 
 # MLFlow setup
 try:
@@ -54,13 +54,7 @@ class State(MessagesState):
 
 def entry_point(state: State):
     # Starting node
-    system_message = SystemMessage(
-        "You are a health bot. You are a helpful and reliable assistant"
-        " that answers questions about health."
-        "You prefer to use web search to find information. When receiving "
-        "a question, use web search to find top web search results"
-        "You do not accept questions about anything else than health"
-    )
+    system_message = get_system_prompt("rag_only")
 
     human_message = HumanMessage(state["user_question"])
     messages = add_messages(system_message, human_message)
@@ -78,8 +72,9 @@ def route_to_tool(state: State):
     # Routes to web search tool
     last_message = state["messages"][-1]
 
+    # TODO need to decide which tool use here
     if last_message.tool_calls:
-        return "web_search"
+        return "search_health_documents"
     else:
         return END
 
@@ -237,6 +232,7 @@ workflow = StateGraph(State)
 workflow.add_node("entry_point", entry_point)
 workflow.add_node("agent", agent)
 workflow.add_node("web_search", ToolNode([web_search]))
+workflow.add_node("search_health_documents", ToolNode([search_health_documents]))
 workflow.add_node("summarize", summarize)
 workflow.add_node("generate_quiz", generate_quiz)
 workflow.add_node("grade_quiz", grade_quiz)
@@ -253,10 +249,10 @@ workflow.add_edge("entry_point", "agent")
 workflow.add_conditional_edges(
     source="agent",
     path=route_to_tool,
-    path_map=["web_search", END]
+    path_map=["search_health_documents", END]
 )
 
-workflow.add_edge("web_search", "summarize")
+workflow.add_edge("search_health_documents", "summarize")
 
 # At this point, we interrupt and ask if they want a quiz
 workflow.add_edge("summarize", "ask_for_quiz")
