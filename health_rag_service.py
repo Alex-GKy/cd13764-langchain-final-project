@@ -38,11 +38,14 @@ class HealthRAGService:
         indexing_pipeline = Pipeline()
         indexing_pipeline.add_component("converter", PyPDFToDocument())
         indexing_pipeline.add_component("cleaner", DocumentCleaner())
-        indexing_pipeline.add_component("splitter", DocumentSplitter(
-            split_by="sentence", split_length=3))
-        indexing_pipeline.add_component("embedder", OpenAIDocumentEmbedder())
-        indexing_pipeline.add_component("writer", DocumentWriter(
-            document_store=self.document_store))
+        indexing_pipeline.add_component("splitter",
+                                        DocumentSplitter(split_by="sentence",
+                                                         split_length=3))
+        indexing_pipeline.add_component("embedder",
+                                        OpenAIDocumentEmbedder())
+        indexing_pipeline.add_component("writer",
+                                        DocumentWriter(
+                                            document_store=self.document_store))
 
         # Connect indexing components
         indexing_pipeline.connect("converter", "cleaner")
@@ -72,7 +75,8 @@ class HealthRAGService:
 
         # 4. Create RAG pipeline
         self.rag_pipeline = Pipeline()
-        self.rag_pipeline.add_component("text_embedder", OpenAITextEmbedder())
+        self.rag_pipeline.add_component("text_embedder",
+                                        OpenAITextEmbedder())
         self.rag_pipeline.add_component("retriever",
                                         InMemoryEmbeddingRetriever(
                                             document_store=self.document_store,
@@ -150,3 +154,41 @@ class HealthRAGService:
 
 # Global instance (singleton pattern for simplicity)
 health_rag = HealthRAGService()
+
+
+def main():
+    # Create a service instance
+    service = HealthRAGService()
+
+    # Initialize the service
+    if service.initialize():
+        print("\n" + "=" * 50)
+        print("TESTING HEALTH RAG SERVICE")
+        print("=" * 50)
+
+        # Test with a diabetes query (should find no relevant documents)
+        query = "What are the symptoms of diabetes?"
+        print(f"\nQuery: {query}")
+
+        # Get context for the query
+        context = service.get_context_for_query(query)
+
+        if context:
+            print(f"\nFound relevant context:")
+            print("-" * 30)
+            print(context[:500] + "..." if len(context) > 500 else context)
+        else:
+            print("\n❌ No relevant documents found for this query.")
+            print(
+                "The available health documents cover: headaches, migraines, "
+                "back pain, neck pain, and stress management.")
+            print(
+                "For diabetes information, you would need to add "
+                "diabetes-related PDFs to the system.")
+
+    else:
+        print("Failed to initialize Health RAG Service!")
+
+
+if __name__ == "__main__":
+    main()

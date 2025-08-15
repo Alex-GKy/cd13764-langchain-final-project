@@ -18,8 +18,8 @@ from prompt_library import get_system_prompt
 
 # MLFlow setup
 try:
-    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI",
-                                      "http://127.0.0.1:5000"))
+    mlflow.set_tracking_uri(
+        os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000"))
     mlflow.set_experiment("health_bot")
     mlflow.langchain.autolog()
 except:
@@ -27,11 +27,7 @@ except:
 
 # base_url = "https://openai.vocareum.com/v1"
 base_url = "https://api.openai.com/v1"
-llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    temperature=0.2,
-    base_url=base_url
-)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, base_url=base_url)
 
 
 @dataclass
@@ -54,7 +50,7 @@ class State(MessagesState):
 
 def entry_point(state: State):
     # Starting node
-    system_message = get_system_prompt("rag_only")
+    system_message = get_system_prompt("rag_with_fallback")
 
     human_message = HumanMessage(state["user_question"])
     messages = add_messages(system_message, human_message)
@@ -78,7 +74,70 @@ def route_to_tool(state: State):
     else:
         return END
 
-   
+
+def route_after_rag(state: State):
+    """Route after RAG search - check if we need to use agent's own
+    knowledge"""
+
+    last_message = state["messages"][-1]
+
+    # Check if the RAG search didn't find relevant documents
+    if (hasattr(last_message,
+                'content') and last_message.content ==
+            "NO_RELEVANT_DOCUMENTS_FOUND"):
+        return "agent_knowledge"
+
+    elif (hasattr(last_message,
+                  'content') and last_message.content ==
+          "RAG_SERVICE_UNAVAILABLE"):
+        return "agent_knowledge"
+
+    else:
+        return "summarize"
+
+
+def agent_knowledge(state: State):
+    """Use agent's own knowledge when RAG doesn't find relevant documents"""
+
+    # Create a separate LLM instance without tools for agent knowledge fallback
+    # Otherwise it will try to use a tool call
+    llm_no_tools = ChatOpenAI(model="gpt-4o-mini",
+                              temperature=0.2,
+                              base_url=base_url)
+
+    # Get the original user question from the state
+    user_question = state.get("user_question", "")
+
+    print(f"🧠 Using agent knowledge to answer: {user_question}")
+
+    # Create a system message for using agent's own knowledge
+    system_message = SystemMessage(
+        "The health document search didn't find relevant documents for this "
+        "question. "
+        "Use your own knowledge to provide a helpful, accurate response "
+        "about this health topic. "
+        "Provide comprehensive information including:\n"
+        "- Overview of the condition/topic\n"
+        "- Common symptoms if applicable\n"
+        "- Potential causes if relevant\n"
+        "- General management or treatment approaches\n"
+        "- When to seek medical help\n\n"
+        "Be informative but also mention that the user should consult with "
+        "healthcare "
+        "professionals for personalized medical advice. "
+        "Structure your response clearly with helpful sections."
+        "Limit your response to around half a page.")
+
+    # Create a new human message with just the user's question
+    human_message = HumanMessage(user_question)
+
+    # Use the LLM WITHOUT tools to get response using agent's knowledge
+    ai_message = llm_no_tools.invoke([system_message, human_message])
+
+    # Store this as the summary for later use in quiz generation
+    return {"messages": [ai_message], "summary": ai_message.content}
+
+
 @tool
 def search_health_documents(query: str) -> str:
     """
@@ -99,9 +158,12 @@ def search_health_documents(query: str) -> str:
 
     # Initialize RAG service if not already done
     if not health_rag.is_initialized:
+
         print("Initializing Health RAG Service...")
+
         if not health_rag.initialize():
-            return "Sorry, I couldn't access the health documents at this time."
+            return "RAG_SERVICE_UNAVAILABLE"
+
         health_rag.set_relevance_threshold(
             0.8)  # Use higher threshold for better precision
 
@@ -109,15 +171,12 @@ def search_health_documents(query: str) -> str:
     context = health_rag.get_context_for_query(query)
 
     if context:
-        return f"Here's relevant information from our health documents:\n\n{context}"
+        return (f"Here's relevant information from our health documents:\n\n"
+                f"{context}")
     else:
-        return (
-            "I don't have specific information about that topic in my health documents. "
-            "The available documents cover: tension headaches, migraines, lower back pain, "
-            "neck pain, and stress management for pain relief. "
-            "I can search the web for more general information if you'd like.")
-    
-    
+        return "NO_RELEVANT_DOCUMENTS_FOUND"
+
+
 @tool
 def web_search(query: str) -> Dict:
     """
@@ -135,8 +194,7 @@ def summarize(state: State):
         "coherent,"
         "helpful response, spanning 2-3 paragraphs."
         "Make sure to use at least 3 sources."
-        "Cite your sources."
-    )
+        "Cite your sources.")
     ai_message = llm.invoke(state["messages"] + [system_message])
     return {"messages": [ai_message], "summary": ai_message.content}
 
@@ -170,11 +228,14 @@ def route_to_new_topic(state: State):
 
 def goodbye_message(state: State):
     # Generate a friendly goodbye message
-    farewell_content = "👋 Thank you for using HealthBot! I hope the information was helpful. Take care of your health, and feel free to come back anytime you have more health questions. Stay well! 🌟"
-    
+    farewell_content = ("👋 Thank you for using HealthBot! I hope the "
+                        "information was helpful. Take care of your health, "
+                        "and feel free to come back anytime you have more "
+                        "health questions. Stay well! 🌟")
+
     # Create goodbye message
     goodbye_msg = AIMessage(content=farewell_content)
-    
+
     return {"messages": [goodbye_msg]}
 
 
@@ -191,8 +252,7 @@ def generate_quiz(state: State):
         "answers, as the user is supposed to provide a free text answer."
         "Do not generate the correct answer yet."
         f'Use only this information as source for your question: '
-        f'{state["summary"]}'
-    )
+        f'{state["summary"]}')
     ai_message = llm.invoke(state["messages"] + [system_message])
 
     return {"messages": [ai_message],
@@ -209,15 +269,15 @@ def grade_quiz(state: State):
         f"For your grade, use only information from this summary of web "
         f"search results on the topic:{state['summary']}"
         "Provide a short explanation for your grade, and a citation from the "
-        "summaries provided above"
-    )
+        "summaries provided above")
 
     # Don't need the full message history here as we're only grading
     ai_message = llm.invoke([system_message])
-    
+
     # Modify the message content by adding the congratulatory line at the start
-    modified_content = f"🎉 Well done! Here's how I grade your answer and an explanation:\n\n{ai_message.content}"
-    
+    modified_content = (f"🎉 Well done! Here's how I grade your answer and an "
+                        f"explanation:\n\n{ai_message.content}")
+
     # Create a new message with the modified content
     modified_message = AIMessage(content=modified_content)
 
@@ -232,7 +292,9 @@ workflow = StateGraph(State)
 workflow.add_node("entry_point", entry_point)
 workflow.add_node("agent", agent)
 workflow.add_node("web_search", ToolNode([web_search]))
-workflow.add_node("search_health_documents", ToolNode([search_health_documents]))
+workflow.add_node("search_health_documents",
+                  ToolNode([search_health_documents]))
+workflow.add_node("agent_knowledge", agent_knowledge)
 workflow.add_node("summarize", summarize)
 workflow.add_node("generate_quiz", generate_quiz)
 workflow.add_node("grade_quiz", grade_quiz)
@@ -246,26 +308,24 @@ workflow.add_edge(START, "entry_point")
 workflow.add_edge("entry_point", "agent")
 
 # Routes to web search tool
-workflow.add_conditional_edges(
-    source="agent",
-    path=route_to_tool,
-    path_map=["search_health_documents", END]
-)
+workflow.add_conditional_edges(source="agent", path=route_to_tool,
+                               path_map=["search_health_documents", END])
 
-workflow.add_edge("search_health_documents", "summarize")
+# Route after RAG search - either to summarize or agent knowledge
+workflow.add_conditional_edges(source="search_health_documents",
+                               path=route_after_rag,
+                               path_map={"summarize": "summarize",
+                                         "agent_knowledge": "agent_knowledge"})
 
-# At this point, we interrupt and ask if they want a quiz
+# Both summarize and agent_knowledge lead to quiz
 workflow.add_edge("summarize", "ask_for_quiz")
+workflow.add_edge("agent_knowledge", "ask_for_quiz")
 
 # Check if they wanted a quiz and route
-workflow.add_conditional_edges(
-    source="ask_for_quiz",
-    path=route_to_quiz,
-    path_map={
-        "generate_quiz": "generate_quiz",
-        "ask_for_new_topic": "ask_for_new_topic"
-    }
-)
+workflow.add_conditional_edges(source="ask_for_quiz", path=route_to_quiz,
+                               path_map={"generate_quiz": "generate_quiz",
+                                         "ask_for_new_topic":
+                                             "ask_for_new_topic"})
 
 workflow.add_edge("generate_quiz", "grade_quiz")
 
@@ -273,16 +333,13 @@ workflow.add_edge("generate_quiz", "grade_quiz")
 workflow.add_edge("grade_quiz", "ask_for_new_topic")
 
 # Route based on new topic choice
-workflow.add_conditional_edges(
-    source="ask_for_new_topic",
-    path=route_to_new_topic,
-    path_map={
-        "ask_topic_question": "ask_topic_question",
-        "goodbye_message": "goodbye_message"
-    }
-)
+workflow.add_conditional_edges(source="ask_for_new_topic",
+                               path=route_to_new_topic,
+                               path_map={
+                                   "ask_topic_question": "ask_topic_question",
+                                   "goodbye_message": "goodbye_message"})
 
-# Loop back to entry_point with new question
+# Loop back to entry_point with the new question
 workflow.add_edge("ask_topic_question", "entry_point")
 
 # Add edge from goodbye to END:
@@ -291,9 +348,7 @@ workflow.add_edge("goodbye_message", END)
 memory = MemorySaver()
 graph = workflow.compile(
     interrupt_before=["ask_for_quiz", "ask_for_new_topic", "grade_quiz",
-                      "ask_topic_question"],
-    checkpointer=memory
-)
+                      "ask_topic_question"], checkpointer=memory)
 
 # Draw the graph for inspection/debugging
 png_bytes = graph.get_graph().draw_mermaid_png()
@@ -326,9 +381,9 @@ class HealthBotSession:
                                       stream_mode="values"):
                 if messages := event.get("messages", []):
                     message = messages[-1]
-                    if (message.id != self.last_printed_message_id and
-                            message.type == "ai" and
-                            message.content):
+                    if (
+                            message.id != self.last_printed_message_id and
+                            message.type == "ai" and message.content):
                         self.last_printed_message_id = message.id
                         yield message.content  # Yield AI message
 
@@ -343,9 +398,7 @@ class HealthBotSession:
             if next_node == "ask_for_quiz":
                 user_response = yield UserInputRequest(
                     prompt="Would you like to do a quiz about this topic?",
-                    input_type="quiz_choice",
-                    options=["Yes", "No"]
-                )
+                    input_type="quiz_choice", options=["Yes", "No"])
                 choice = "yes" if user_response.lower().strip() in ["y",
                                                                     "yes"] \
                     else "no"
@@ -355,17 +408,14 @@ class HealthBotSession:
             elif next_node == "grade_quiz":
                 user_response = yield UserInputRequest(
                     prompt="Please state your answer:",
-                    input_type="quiz_answer"
-                )
+                    input_type="quiz_answer")
                 graph.update_state(self.config, {"quiz_answer": user_response})
                 input_data = None
 
             elif next_node == "ask_for_new_topic":
                 user_response = yield UserInputRequest(
                     prompt="Would you like to discuss another topic?",
-                    input_type="new_topic_choice",
-                    options=["Yes", "No"]
-                )
+                    input_type="new_topic_choice", options=["Yes", "No"])
                 choice = "yes" if user_response.lower().strip() in ["y",
                                                                     "yes"] \
                     else "no"
@@ -375,8 +425,7 @@ class HealthBotSession:
             elif next_node == "ask_topic_question":
                 user_response = yield UserInputRequest(
                     prompt="What health topic would you like me to research?",
-                    input_type="new_question"
-                )
+                    input_type="new_question")
                 # For new questions, we reset and restart with new input
                 self.initial_question = user_response
                 self.last_printed_message_id = None
