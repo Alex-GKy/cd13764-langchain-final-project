@@ -12,6 +12,9 @@ from dataclasses import dataclass
 import os
 import mlflow
 import uuid
+from langchain_core.tools import tool
+from health_rag_service import health_rag
+from typing import Optional
 
 # MLFlow setup
 try:
@@ -80,7 +83,46 @@ def route_to_tool(state: State):
     else:
         return END
 
+   
+@tool
+def search_health_documents(query: str) -> str:
+    """
+    Search through health documents for relevant information.
 
+    Use this tool when users ask questions about:
+    - Headaches, migraines, tension headaches
+    - Back pain, neck pain
+    - Stress management for pain relief
+    - Symptoms, causes, treatments, prevention
+
+    Args:
+        query: The health question or topic to search for
+
+    Returns:
+        Relevant health information or a message if no relevant content found
+    """
+
+    # Initialize RAG service if not already done
+    if not health_rag.is_initialized:
+        print("Initializing Health RAG Service...")
+        if not health_rag.initialize():
+            return "Sorry, I couldn't access the health documents at this time."
+        health_rag.set_relevance_threshold(
+            0.8)  # Use higher threshold for better precision
+
+    # Get context for the query
+    context = health_rag.get_context_for_query(query)
+
+    if context:
+        return f"Here's relevant information from our health documents:\n\n{context}"
+    else:
+        return (
+            "I don't have specific information about that topic in my health documents. "
+            "The available documents cover: tension headaches, migraines, lower back pain, "
+            "neck pain, and stress management for pain relief. "
+            "I can search the web for more general information if you'd like.")
+    
+    
 @tool
 def web_search(query: str) -> Dict:
     """
@@ -188,7 +230,7 @@ def grade_quiz(state: State):
 
 
 # bind tools
-llm = llm.bind_tools([web_search])
+llm = llm.bind_tools([web_search, search_health_documents])
 
 # build graph
 workflow = StateGraph(State)
