@@ -7,7 +7,7 @@ from langgraph.graph import StateGraph, MessagesState, START, END, add_messages
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import AIMessage
 from tavily import TavilyClient
-from typing import Dict, Union
+from typing import Dict, Union, Optional
 from dataclasses import dataclass
 import os
 import mlflow
@@ -46,6 +46,7 @@ class State(MessagesState):
     quiz_answer: str
     quiz_choice: str
     new_topic_choice: str
+    information_source: Optional[str]
 
 
 def entry_point(state: State):
@@ -126,7 +127,7 @@ def agent_knowledge(state: State):
         "healthcare "
         "professionals for personalized medical advice. "
         "Structure your response clearly with helpful sections."
-        "Limit your response to around half a page.")
+        "Limit your response to 2-3 paragraphs max")
 
     # Create a new human message with just the user's question
     human_message = HumanMessage(user_question)
@@ -135,7 +136,11 @@ def agent_knowledge(state: State):
     ai_message = llm_no_tools.invoke([system_message, human_message])
 
     # Store this as the summary for later use in quiz generation
-    return {"messages": [ai_message], "summary": ai_message.content}
+    return {
+        "messages": [ai_message],
+        "summary": ai_message.content,
+        "information_source": "agent_knowledge"  # Add this line
+    }
 
 
 @tool
@@ -195,8 +200,14 @@ def summarize(state: State):
         "helpful response, spanning 2-3 paragraphs."
         "Make sure to use at least 3 sources."
         "Cite your sources.")
+
     ai_message = llm.invoke(state["messages"] + [system_message])
-    return {"messages": [ai_message], "summary": ai_message.content}
+
+    return {
+        "messages": [ai_message],
+        "summary": ai_message.content,
+        "information_source": "rag"  # Add this line
+    }
 
 
 def ask_for_quiz(state: State):
@@ -220,6 +231,7 @@ def ask_for_new_topic(state: State):
 
 def route_to_new_topic(state: State):
     # Checks the user's decision and routes accordingly
+
     if state.get("new_topic_choice") == "yes":
         return "ask_topic_question"
     else:
@@ -228,6 +240,7 @@ def route_to_new_topic(state: State):
 
 def goodbye_message(state: State):
     # Generate a friendly goodbye message
+
     farewell_content = ("👋 Thank you for using HealthBot! I hope the "
                         "information was helpful. Take care of your health, "
                         "and feel free to come back anytime you have more "
@@ -236,7 +249,9 @@ def goodbye_message(state: State):
     # Create goodbye message
     goodbye_msg = AIMessage(content=farewell_content)
 
-    return {"messages": [goodbye_msg]}
+    return {
+        "messages": [goodbye_msg],
+        "information_source": None}
 
 
 def ask_topic_question(state: State):
@@ -369,6 +384,16 @@ class HealthBotSession:
         self.last_printed_message_id = None
         self.initial_question = initial_question
 
+    def _get_source_prefix(self, information_source: str) -> str:
+        """Get the source prefix based on the information source"""
+
+        source_prefixes = {
+            "rag": "📚 Based on our curated health documents:\n\n",
+            "agent_knowledge": "🧠 Based on my general medical knowledge:\n\n",
+            "web_search": "🔍 Based on recent web search results:\n\n"
+        }
+        return source_prefixes.get(information_source, "")
+
     def run_conversation(self):
         """Generator that yields AI messages and UserInputRequests, expects
         user responses via send()"""
@@ -385,7 +410,14 @@ class HealthBotSession:
                             message.id != self.last_printed_message_id and
                             message.type == "ai" and message.content):
                         self.last_printed_message_id = message.id
-                        yield message.content  # Yield AI message
+                        
+                        # Check if we have source information and prepend it
+                        content = message.content
+                        if information_source := event.get("information_source"):
+                            source_prefix = self._get_source_prefix(information_source)
+                            content = source_prefix + content
+                        
+                        yield content  # Yield AI message with source prefix
 
             # Check what's next after streaming stops
             state = graph.get_state(self.config)
