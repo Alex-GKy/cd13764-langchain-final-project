@@ -1,5 +1,6 @@
 import streamlit as st
 import uuid
+import os
 from typing import Generator
 from health_bot import HealthBotSession, UserInputRequest
 
@@ -98,6 +99,60 @@ with st.sidebar:
     with col2:
         st.metric("Bot Responses", bot_messages)
         st.metric("Session ID", st.session_state.session_id)
+    
+    # Document Upload Section
+    st.markdown("### 📄 Document Library")
+    
+    # Initialize uploaded files in session state
+    if "uploaded_files" not in st.session_state:
+        st.session_state.uploaded_files = []
+    
+    # File uploader
+    uploaded_file = st.file_uploader(
+        "Upload PDF documents",
+        type="pdf",
+        help="Upload PDF files to add them to the knowledge base",
+        label_visibility="collapsed"
+    )
+    
+    # Handle file upload
+    if uploaded_file is not None:
+        # Save file to health_pdfs directory (overwrite if exists)
+        os.makedirs("health_pdfs", exist_ok=True)
+        file_path = f"health_pdfs/{uploaded_file.name}"
+        
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        # Add to session state if not already there
+        file_names = [f["name"] for f in st.session_state.uploaded_files]
+        if uploaded_file.name not in file_names:
+            st.session_state.uploaded_files.append({
+                "name": uploaded_file.name,
+                "path": file_path
+            })
+        
+        st.success(f"✅ Uploaded {uploaded_file.name}")
+        st.rerun()
+    
+    # Display uploaded files
+    if st.session_state.uploaded_files:
+        st.markdown("**Uploaded Documents:**")
+        for file_info in st.session_state.uploaded_files:
+            st.markdown(f"📄 {file_info['name']}")
+    else:
+        # Check for existing PDF files in health_pdfs folder
+        if os.path.exists("health_pdfs"):
+            existing_pdfs = [f for f in os.listdir("health_pdfs") if f.endswith('.pdf')]
+            if existing_pdfs:
+                st.markdown("**Available Documents:**")
+                for pdf in existing_pdfs:
+                    st.markdown(f"📄 {pdf}")
+        
+        if not st.session_state.uploaded_files and (not os.path.exists("health_pdfs") or not existing_pdfs):
+            st.info("No documents uploaded yet")
+    
+    st.markdown("---")
     
     # Control buttons
     st.markdown("### 🎛️ Controls")
