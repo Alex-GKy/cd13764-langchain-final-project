@@ -100,6 +100,34 @@ with st.sidebar:
         st.metric("Bot Responses", bot_messages)
         st.metric("Session ID", st.session_state.session_id)
     
+    # Control buttons
+    st.markdown("### 🎛️ Controls")
+    
+    if st.button("🗑️ Clear Conversation", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.bot_session = None
+        st.session_state.conversation_generator = None
+        st.session_state.awaiting_input = None
+        st.session_state.conversation_active = False
+        st.session_state.session_id = str(uuid.uuid4())[:8]
+        st.rerun()
+    
+    if st.button("💾 Export Conversation", use_container_width=True, disabled=len(st.session_state.messages) == 0):
+        conversation_text = ""
+        for message in st.session_state.messages:
+            role = "You" if message["role"] == "user" else "HealthBot"
+            conversation_text += f"{role}: {message['content']}\n\n"
+        
+        st.download_button(
+            label="📄 Download as Text",
+            data=conversation_text,
+            file_name=f"healthbot_conversation_{st.session_state.session_id}.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+    
+    st.markdown("---")
+    
     # Document Upload Section
     st.markdown("### 📄 Document Library")
     
@@ -151,34 +179,6 @@ with st.sidebar:
         
         if not st.session_state.uploaded_files and (not os.path.exists("health_pdfs") or not existing_pdfs):
             st.info("No documents uploaded yet")
-    
-    st.markdown("---")
-    
-    # Control buttons
-    st.markdown("### 🎛️ Controls")
-    
-    if st.button("🗑️ Clear Conversation", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.bot_session = None
-        st.session_state.conversation_generator = None
-        st.session_state.awaiting_input = None
-        st.session_state.conversation_active = False
-        st.session_state.session_id = str(uuid.uuid4())[:8]
-        st.rerun()
-    
-    if st.button("💾 Export Conversation", use_container_width=True, disabled=len(st.session_state.messages) == 0):
-        conversation_text = ""
-        for message in st.session_state.messages:
-            role = "You" if message["role"] == "user" else "HealthBot"
-            conversation_text += f"{role}: {message['content']}\n\n"
-        
-        st.download_button(
-            label="📄 Download as Text",
-            data=conversation_text,
-            file_name=f"healthbot_conversation_{st.session_state.session_id}.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
     
     # Help section
     with st.expander("❓ How to Use HealthBot"):
