@@ -134,51 +134,75 @@ with st.sidebar:
     # Initialize uploaded files in session state
     if "uploaded_files" not in st.session_state:
         st.session_state.uploaded_files = []
+    if "processed_files" not in st.session_state:
+        st.session_state.processed_files = set()
     
     # File uploader
-    uploaded_file = st.file_uploader(
+    uploaded_files = st.file_uploader(
         "Upload PDF documents",
         type="pdf",
         help="Upload PDF files to add them to the knowledge base",
-        label_visibility="collapsed"
+        label_visibility="collapsed",
+        accept_multiple_files=True
     )
     
     # Handle file upload
-    if uploaded_file is not None:
-        # Save file to health_pdfs directory (overwrite if exists)
-        os.makedirs("health_pdfs", exist_ok=True)
-        file_path = f"health_pdfs/{uploaded_file.name}"
+    if uploaded_files is not None and len(uploaded_files) > 0:
+        # Check if we have new files to process
+        current_files = {f.name for f in uploaded_files}
+        new_files = current_files - st.session_state.processed_files
         
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        
-        # Add to session state if not already there
-        file_names = [f["name"] for f in st.session_state.uploaded_files]
-        if uploaded_file.name not in file_names:
-            st.session_state.uploaded_files.append({
-                "name": uploaded_file.name,
-                "path": file_path
-            })
-        
-        st.success(f"✅ Uploaded {uploaded_file.name}")
-        st.rerun()
+        if new_files:
+            # Save files to health_pdfs directory (overwrite if exists)
+            os.makedirs("health_pdfs", exist_ok=True)
+            
+            uploaded_count = 0
+            for uploaded_file in uploaded_files:
+                if uploaded_file.name in new_files:
+                    file_path = f"health_pdfs/{uploaded_file.name}"
+                    
+                    with open(file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    # Add to session state if not already there
+                    file_names = [f["name"] for f in st.session_state.uploaded_files]
+                    if uploaded_file.name not in file_names:
+                        st.session_state.uploaded_files.append({
+                            "name": uploaded_file.name,
+                            "path": file_path
+                        })
+                    
+                    uploaded_count += 1
+            
+            # Update processed files
+            st.session_state.processed_files.update(new_files)
+            
+            if uploaded_count == 1:
+                st.success(f"✅ Uploaded {list(new_files)[0]}")
+            elif uploaded_count > 1:
+                st.success(f"✅ Uploaded {uploaded_count} files")
+            st.rerun()
     
-    # Display uploaded files
-    if st.session_state.uploaded_files:
-        st.markdown("**Uploaded Documents:**")
-        for file_info in st.session_state.uploaded_files:
-            st.markdown(f"📄 {file_info['name']}")
+    # Display all available documents
+    all_documents = []
+    
+    # Add uploaded files
+    for file_info in st.session_state.uploaded_files:
+        all_documents.append(file_info['name'])
+    
+    # Add existing PDF files from health_pdfs folder
+    if os.path.exists("health_pdfs"):
+        existing_pdfs = [f for f in os.listdir("health_pdfs") if f.endswith('.pdf')]
+        for pdf in existing_pdfs:
+            if pdf not in all_documents:  # Avoid duplicates
+                all_documents.append(pdf)
+    
+    if all_documents:
+        st.markdown("**Available Documents:**")
+        for doc in sorted(all_documents):  # Sort alphabetically
+            st.markdown(f"📄 {doc}")
     else:
-        # Check for existing PDF files in health_pdfs folder
-        if os.path.exists("health_pdfs"):
-            existing_pdfs = [f for f in os.listdir("health_pdfs") if f.endswith('.pdf')]
-            if existing_pdfs:
-                st.markdown("**Available Documents:**")
-                for pdf in existing_pdfs:
-                    st.markdown(f"📄 {pdf}")
-        
-        if not st.session_state.uploaded_files and (not os.path.exists("health_pdfs") or not existing_pdfs):
-            st.info("No documents uploaded yet")
+        st.info("No documents uploaded yet")
     
     # Help section
     with st.expander("❓ How to Use HealthBot"):
