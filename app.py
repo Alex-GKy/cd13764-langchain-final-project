@@ -2,7 +2,7 @@ import streamlit as st
 import uuid
 import os
 from typing import Generator
-from health_bot import HealthBotSession, UserInputRequest
+from health_bot_session import HealthBotSession, UserInputRequest
 
 # Page configuration
 st.set_page_config(
@@ -248,7 +248,7 @@ def continue_conversation(user_input=None):
             result = next(st.session_state.conversation_generator)
 
         if isinstance(result, UserInputRequest):
-            # Bot is requesting user input
+            # Bot is requesting user input´
             st.session_state.awaiting_input = result
         else:
             # Bot sent a message - add it to messages
@@ -287,7 +287,7 @@ def continue_conversation(user_input=None):
 chat_container = st.container()
 
 with chat_container:
-    # Display chat history
+    # Display chat history if there's any, otherwise a welcome message
     if st.session_state.messages:
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):

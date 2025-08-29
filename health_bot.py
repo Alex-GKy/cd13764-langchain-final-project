@@ -1,18 +1,13 @@
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, MessagesState, START, END, add_messages
 from langgraph.prebuilt import ToolNode
-from langchain_core.messages import AIMessage
 from tavily import TavilyClient
 from typing import Dict, Union, Optional
-from dataclasses import dataclass
 import os
 import mlflow
-import uuid
-from langchain_core.tools import tool
 from health_rag_service import health_rag
 from prompt_library import get_system_prompt
 
@@ -28,15 +23,6 @@ except:
 # base_url = "https://openai.vocareum.com/v1"
 base_url = "https://api.openai.com/v1"
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, base_url=base_url)
-
-
-@dataclass
-class UserInputRequest:
-    """Represents a request for user input that the UI should handle"""
-    prompt: str
-    input_type: str  # "quiz_choice", "quiz_answer", "new_topic_choice",
-    # "new_question"
-    options: list = None  # For multiple choice questions
 
 
 class State(MessagesState):
@@ -299,169 +285,86 @@ def grade_quiz(state: State):
     return {"messages": [modified_message]}
 
 
-# bind tools
-llm = llm.bind_tools([web_search, search_health_documents])
+def create_health_bot_graph(interrupt_before=None, checkpointer=None):
+    """Factory function to create and return a configured health bot graph"""
+    
+    if interrupt_before is None:
+        interrupt_before = ["ask_for_quiz", "ask_for_new_topic", "grade_quiz", "ask_topic_question"]
+    
+    if checkpointer is None:
+        checkpointer = MemorySaver()
+    
+    # Bind tools to LLM
+    llm_with_tools = llm.bind_tools([web_search, search_health_documents])
+    
+    # Build workflow
+    workflow = StateGraph(State)
+    workflow.add_node("entry_point", entry_point)
+    workflow.add_node("agent", agent)
+    workflow.add_node("web_search", ToolNode([web_search]))
+    workflow.add_node("search_health_documents", ToolNode([search_health_documents]))
+    workflow.add_node("agent_knowledge", agent_knowledge)
+    workflow.add_node("summarize", summarize)
+    workflow.add_node("generate_quiz", generate_quiz)
+    workflow.add_node("grade_quiz", grade_quiz)
+    workflow.add_node("ask_for_quiz", ask_for_quiz)
+    workflow.add_node("ask_for_new_topic", ask_for_new_topic)
+    workflow.add_node("ask_topic_question", ask_topic_question)
+    workflow.add_node("goodbye_message", goodbye_message)
 
-# build graph
-workflow = StateGraph(State)
-workflow.add_node("entry_point", entry_point)
-workflow.add_node("agent", agent)
-workflow.add_node("web_search", ToolNode([web_search]))
-workflow.add_node("search_health_documents",
-                  ToolNode([search_health_documents]))
-workflow.add_node("agent_knowledge", agent_knowledge)
-workflow.add_node("summarize", summarize)
-workflow.add_node("generate_quiz", generate_quiz)
-workflow.add_node("grade_quiz", grade_quiz)
-workflow.add_node("ask_for_quiz", ask_for_quiz)
-workflow.add_node("ask_for_new_topic", ask_for_new_topic)
-workflow.add_node("ask_topic_question", ask_topic_question)
-workflow.add_node("goodbye_message", goodbye_message)
+    # Start
+    workflow.add_edge(START, "entry_point")
+    workflow.add_edge("entry_point", "agent")
 
-# Start
-workflow.add_edge(START, "entry_point")
-workflow.add_edge("entry_point", "agent")
+    # Routes to web search tool
+    workflow.add_conditional_edges(source="agent", path=route_to_tool,
+                                   path_map=["search_health_documents", END])
 
-# Routes to web search tool
-workflow.add_conditional_edges(source="agent", path=route_to_tool,
-                               path_map=["search_health_documents", END])
+    # Route after RAG search - either to summarize or agent knowledge
+    workflow.add_conditional_edges(source="search_health_documents",
+                                   path=route_after_rag,
+                                   path_map={"summarize": "summarize",
+                                             "agent_knowledge": "agent_knowledge"})
 
-# Route after RAG search - either to summarize or agent knowledge
-workflow.add_conditional_edges(source="search_health_documents",
-                               path=route_after_rag,
-                               path_map={"summarize": "summarize",
-                                         "agent_knowledge": "agent_knowledge"})
+    # Both summarize and agent_knowledge lead to quiz
+    workflow.add_edge("summarize", "ask_for_quiz")
+    workflow.add_edge("agent_knowledge", "ask_for_quiz")
 
-# Both summarize and agent_knowledge lead to quiz
-workflow.add_edge("summarize", "ask_for_quiz")
-workflow.add_edge("agent_knowledge", "ask_for_quiz")
+    # Check if they wanted a quiz and route
+    workflow.add_conditional_edges(source="ask_for_quiz", path=route_to_quiz,
+                                   path_map={"generate_quiz": "generate_quiz",
+                                             "ask_for_new_topic": "ask_for_new_topic"})
 
-# Check if they wanted a quiz and route
-workflow.add_conditional_edges(source="ask_for_quiz", path=route_to_quiz,
-                               path_map={"generate_quiz": "generate_quiz",
-                                         "ask_for_new_topic":
-                                             "ask_for_new_topic"})
+    workflow.add_edge("generate_quiz", "grade_quiz")
 
-workflow.add_edge("generate_quiz", "grade_quiz")
+    # At this point, we interrupt and ask if they want a new topic
+    workflow.add_edge("grade_quiz", "ask_for_new_topic")
 
-# At this point, we interrupt and ask if they want a new topic
-workflow.add_edge("grade_quiz", "ask_for_new_topic")
+    # Route based on new topic choice
+    workflow.add_conditional_edges(source="ask_for_new_topic",
+                                   path=route_to_new_topic,
+                                   path_map={
+                                       "ask_topic_question": "ask_topic_question",
+                                       "goodbye_message": "goodbye_message"})
 
-# Route based on new topic choice
-workflow.add_conditional_edges(source="ask_for_new_topic",
-                               path=route_to_new_topic,
-                               path_map={
-                                   "ask_topic_question": "ask_topic_question",
-                                   "goodbye_message": "goodbye_message"})
+    # Loop back to entry_point with the new question
+    workflow.add_edge("ask_topic_question", "entry_point")
 
-# Loop back to entry_point with the new question
-workflow.add_edge("ask_topic_question", "entry_point")
+    # Add edge from goodbye to END:
+    workflow.add_edge("goodbye_message", END)
 
-# Add edge from goodbye to END:
-workflow.add_edge("goodbye_message", END)
-
-memory = MemorySaver()
-graph = workflow.compile(
-    interrupt_before=["ask_for_quiz", "ask_for_new_topic", "grade_quiz",
-                      "ask_topic_question"], checkpointer=memory)
-
-# Draw the graph for inspection/debugging
-png_bytes = graph.get_graph().draw_mermaid_png()
-with open("health_bot_workflow.png", "wb") as f:
-    f.write(png_bytes)
-
-
-class HealthBotSession:
-    """
-    Session-based health bot that processes one step at a time.
-    The graph manages the flow, we just translate states to UI actions.
-    """
-
-    def __init__(self, initial_question: str):
-        self.thread_id = str(uuid.uuid4())
-        self.config = RunnableConfig()
-        self.config["configurable"] = {"thread_id": self.thread_id}
-        self.last_printed_message_id = None
-        self.initial_question = initial_question
-
-    def _get_source_prefix(self, information_source: str) -> str:
-        """Get the source prefix based on the information source"""
-
-        source_prefixes = {
-            "rag": "📚 Based on our curated health documents:\n\n",
-            "agent_knowledge": "🧠 Based on my general medical knowledge:\n\n",
-            "web_search": "🔍 Based on recent web search results:\n\n"
-        }
-        return source_prefixes.get(information_source, "")
-
-    def run_conversation(self):
-        """Generator that yields AI messages and UserInputRequests, expects
-        user responses via send()"""
-
-        input_data = {"user_question": self.initial_question}
-
-        while True:
-            # Stream the graph until it stops (interrupt or end)
-            for event in graph.stream(input=input_data, config=self.config,
-                                      stream_mode="values"):
-                if messages := event.get("messages", []):
-                    message = messages[-1]
-                    if (
-                            message.id != self.last_printed_message_id and
-                            message.type == "ai" and message.content):
-                        self.last_printed_message_id = message.id
-                        
-                        # Check if we have source information and prepend it
-                        content = message.content
-                        if information_source := event.get("information_source"):
-                            source_prefix = self._get_source_prefix(information_source)
-                            content = source_prefix + content
-                        
-                        yield content  # Yield AI message with source prefix
-
-            # Check what's next after streaming stops
-            state = graph.get_state(self.config)
-            next_node = state.next[0] if state.next else None
-
-            if not next_node or next_node == END:
-                return  # Conversation done
-
-            # Yield appropriate input request and wait for user response
-            if next_node == "ask_for_quiz":
-                user_response = yield UserInputRequest(
-                    prompt="Would you like to do a quiz about this topic?",
-                    input_type="quiz_choice", options=["Yes", "No"])
-                choice = "yes" if user_response.lower().strip() in ["y",
-                                                                    "yes"] \
-                    else "no"
-                graph.update_state(self.config, {"quiz_choice": choice})
-                input_data = None  # No new input data needed, just continue
-
-            elif next_node == "grade_quiz":
-                user_response = yield UserInputRequest(
-                    prompt="Please state your answer:",
-                    input_type="quiz_answer")
-                graph.update_state(self.config, {"quiz_answer": user_response})
-                input_data = None
-
-            elif next_node == "ask_for_new_topic":
-                user_response = yield UserInputRequest(
-                    prompt="Would you like to discuss another topic?",
-                    input_type="new_topic_choice", options=["Yes", "No"])
-                choice = "yes" if user_response.lower().strip() in ["y",
-                                                                    "yes"] \
-                    else "no"
-                graph.update_state(self.config, {"new_topic_choice": choice})
-                input_data = None
-
-            elif next_node == "ask_topic_question":
-                user_response = yield UserInputRequest(
-                    prompt="What health topic would you like me to research?",
-                    input_type="new_question")
-                # For new questions, we reset and restart with new input
-                self.initial_question = user_response
-                self.last_printed_message_id = None
-                # Clear the thread to start fresh
-                self.thread_id = str(uuid.uuid4())
-                self.config["configurable"]["thread_id"] = self.thread_id
-                input_data = {"user_question": user_response}
+    # Compile and return the graph
+    compiled_graph = workflow.compile(
+        interrupt_before=interrupt_before,
+        checkpointer=checkpointer
+    )
+    
+    # Draw the graph for inspection/debugging (optional)
+    try:
+        png_bytes = compiled_graph.get_graph().draw_mermaid_png()
+        with open("health_bot_workflow.png", "wb") as f:
+            f.write(png_bytes)
+    except Exception as e:
+        print(f"Could not generate workflow diagram: {e}")
+    
+    return compiled_graph

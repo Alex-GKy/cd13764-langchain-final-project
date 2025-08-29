@@ -1,4 +1,5 @@
-from health_bot import HealthBotSession
+from health_bot_session import HealthBotSession
+from health_bot import graph, END
 from prompt_library import get_system_prompt
 
 def test_rag_only():
@@ -24,7 +25,7 @@ def test_rag_only():
         print("-" * 40)
         
         try:
-            session = HealthBotSession(query)
+            session = HealthBotSession(query, graph, END)
             conversation = session.run_conversation()
             
             # Get the first response
@@ -40,7 +41,7 @@ def test_rag_only():
     print("-" * 40)
     
     try:
-        session = HealthBotSession(out_of_scope_query)
+        session = HealthBotSession(out_of_scope_query, graph, END)
         conversation = session.run_conversation()
         response = next(conversation)
         print(f"📄 Response: {response}")
