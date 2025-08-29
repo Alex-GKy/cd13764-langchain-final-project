@@ -1,11 +1,13 @@
 # Custom
 
 .context
+.langgraph_api
 *.png
 mlruns
 .history
 .idea
 secrets.toml
+*.pdf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -201,4 +203,5 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-*.pdf
+
+/.claude/settings.local.json
