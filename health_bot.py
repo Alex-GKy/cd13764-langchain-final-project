@@ -285,6 +285,16 @@ def grade_quiz(state: State):
     return {"messages": [modified_message]}
 
 
+def draw_workflow_diagram(compiled_graph, filename="health_bot_workflow.png"):
+    """Draw the workflow diagram for inspection/debugging"""
+    try:
+        png_bytes = compiled_graph.get_graph().draw_mermaid_png()
+        with open(filename, "wb") as f:
+            f.write(png_bytes)
+    except Exception as e:
+        print(f"Could not generate workflow diagram: {e}")
+
+
 def create_health_bot_graph(interrupt_before=None, checkpointer=None):
     """Factory function to create and return a configured health bot graph"""
     
@@ -359,12 +369,6 @@ def create_health_bot_graph(interrupt_before=None, checkpointer=None):
         checkpointer=checkpointer
     )
     
-    # Draw the graph for inspection/debugging (optional)
-    try:
-        png_bytes = compiled_graph.get_graph().draw_mermaid_png()
-        with open("health_bot_workflow.png", "wb") as f:
-            f.write(png_bytes)
-    except Exception as e:
-        print(f"Could not generate workflow diagram: {e}")
+    draw_workflow_diagram(compiled_graph)
     
     return compiled_graph
