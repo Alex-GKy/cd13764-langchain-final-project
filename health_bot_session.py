@@ -60,11 +60,18 @@ class HealthBotSession:
         """Generator that yields AI messages and UserInputRequests, expects
         user responses via send()"""
 
-        input_data = {"user_question": self.initial_question}
+        first_iteration = True
 
         while True:
+            # Stream with input only on first iteration
+            stream_input = {
+                "user_question": self.initial_question} \
+                    if first_iteration else None
+
+            first_iteration = False
+
             # Stream the graph until it stops (interrupt or end)
-            for event in self.graph.stream(input=input_data,
+            for event in self.graph.stream(input=stream_input,
                                            config=self.config,
                                            stream_mode="values"):
 
@@ -105,7 +112,6 @@ class HealthBotSession:
                                                                     "yes"] \
                     else "no"
                 self.graph.update_state(self.config, {"quiz_choice": choice})
-                input_data = None  # No new input data needed, just continue
 
             elif next_node == "grade_quiz":
                 input_request = UserInputRequest(
@@ -115,7 +121,6 @@ class HealthBotSession:
                     user_input_request=input_request)
                 self.graph.update_state(self.config,
                                         {"quiz_answer": user_response})
-                input_data = None
 
             elif next_node == "ask_for_new_topic":
                 input_request = UserInputRequest(
@@ -128,7 +133,6 @@ class HealthBotSession:
                     else "no"
                 self.graph.update_state(self.config,
                                         {"new_topic_choice": choice})
-                input_data = None
 
             elif next_node == "ask_topic_question":
                 input_request = UserInputRequest(
@@ -143,3 +147,4 @@ class HealthBotSession:
                 self.thread_id = str(uuid.uuid4())
                 self.config["configurable"]["thread_id"] = self.thread_id
                 input_data = {"user_question": user_response}
+                first_iteration = True  # Reset flag for new conversation
