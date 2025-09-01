@@ -303,6 +303,8 @@ def draw_workflow_diagram(compiled_graph, filename="health_bot_workflow.png"):
 def create_health_bot_graph(interrupt_before=None, checkpointer=None):
     """Factory function to create and return a configured health bot graph"""
 
+    global llm
+
     if interrupt_before is None:
         interrupt_before = ["ask_for_quiz", "ask_for_new_topic", "grade_quiz",
                             "ask_topic_question"]
@@ -311,7 +313,7 @@ def create_health_bot_graph(interrupt_before=None, checkpointer=None):
         checkpointer = MemorySaver()
 
     # Bind tools to LLM
-    llm_with_tools = llm.bind_tools([web_search, search_health_documents])
+    llm = llm.bind_tools([web_search, search_health_documents])
 
     # Build workflow
     workflow = StateGraph(State)
