@@ -11,8 +11,8 @@ def main():
     graph = create_health_bot_graph()
 
     # Create a session with an initial question and the graph
-    session = HealthBotSession("What are tension headache symptoms?", graph,
-                               END)
+    session = HealthBotSession("What are tension headache "
+                               "symptoms?", graph, END)
 
     # Get the generator
     conversation = session.run_conversation()
@@ -21,7 +21,7 @@ def main():
     try:
         response = next(conversation)
         print("=== AGENT RESPONSE ===")
-        print(f"Response: {response}")
+        print(f"Response: {response.message}")
         print("=" * 50)
 
     except Exception as e:
