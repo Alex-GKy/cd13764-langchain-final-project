@@ -1,10 +1,12 @@
 import streamlit as st
-from typing import Generator
-from health_bot_session import HealthBotSession, BotResponse
-from health_bot import create_health_bot_graph
 from langgraph.graph import END
-from ui.ui_styles import configure_page, apply_custom_styles, render_title, render_footer
+
+from health_bot import create_health_bot_graph
+from health_bot_session import HealthBotSession, BotResponse
 from ui.ui_sidebar import render_sidebar
+from ui.ui_styles import (
+    configure_page, apply_custom_styles, render_title, render_footer
+)
 
 # Configure page and apply styling
 configure_page()
@@ -14,74 +16,74 @@ render_title()
 # Render sidebar
 render_sidebar()
 
+# Initialize session state
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "conversation_active" not in st.session_state:
+    st.session_state.conversation_active = False
+if "conversation_generator" not in st.session_state:
+    st.session_state.conversation_generator = None
+if "awaiting_input" not in st.session_state:
+    st.session_state.awaiting_input = None
 
-def create_conversation_generator(question: str) -> Generator:
-    """Create and start a conversation generator for the given question"""
+
+def start_new_conversation(question: str):
+    """Start a new conversation with the given question"""
     graph = create_health_bot_graph()
     bot_session = HealthBotSession(question, graph, END)
-    st.session_state.bot_session = bot_session
-    return bot_session.run_conversation()
+    st.session_state.conversation_generator = bot_session.run_conversation()
+    st.session_state.conversation_active = True
+    st.session_state.awaiting_input = None
 
 
-def continue_conversation(user_input=None):
-    """Continue the bot conversation, handling BotResponse objects"""
+def process_bot_response(response: BotResponse):
+    """Process a BotResponse and update the UI state accordingly"""
+    if response.user_input_request:
+        # Bot is requesting user input - add question to chat history
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": response.user_input_request.prompt
+        })
+        st.session_state.awaiting_input = response.user_input_request
+
+    elif response.message:
+        # Bot sent a message - add it to messages with source info
+        message_content = response.message
+
+        # Add source information if available
+        if response.information_source:
+            source_icons = {
+                "rag": "📚",
+                "knowledge": "🧠",
+                "web": "🔍",
+                "documents": "📄"
+            }
+            icon = source_icons.get(response.information_source, "ℹ️")
+            source_text = response.information_source.title()
+            message_content = (f"{message_content}\n\n*{icon} Source: "
+                               f"{source_text}*")
+
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": message_content
+        })
+        # Clear awaiting input when we get a regular message
+        st.session_state.awaiting_input = None
+
+
+def get_next_bot_response(user_input=None):
+    """Get the next response from the bot generator"""
     try:
         if user_input is not None:
-            # Send user response to the generator
-            result = st.session_state.conversation_generator.send(user_input)
+            return st.session_state.conversation_generator.send(user_input)
         else:
-            # Get next item from generator
-            result = next(st.session_state.conversation_generator)
-
-        # Handle BotResponse objects
-        if isinstance(result, BotResponse):
-            if result.user_input_request:
-                # Bot is requesting user input - add question to chat history
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": result.user_input_request.prompt
-                })
-                st.session_state.awaiting_input = result.user_input_request
-            elif result.message:
-                # Bot sent a message - add it to messages with source info
-                message_content = result.message
-                
-                # Add source information if available
-                if result.information_source:
-                    source_icons = {
-                        "rag": "📚",
-                        "knowledge": "🧠", 
-                        "web": "🔍",
-                        "documents": "📄"
-                    }
-                    icon = source_icons.get(result.information_source, "ℹ️")
-                    message_content = f"{message_content}\n\n*{icon} Source: {result.information_source.title()}*"
-                
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": message_content
-                })
-                st.session_state.awaiting_input = None
-                
-                # Continue to get any follow-up input requests
-                try:
-                    next_result = next(st.session_state.conversation_generator)
-                    if (isinstance(next_result, BotResponse) and 
-                            next_result.user_input_request):
-                        # Add the question to chat history
-                        st.session_state.messages.append({
-                            "role": "assistant", 
-                            "content": next_result.user_input_request.prompt
-                        })
-                        st.session_state.awaiting_input = next_result.user_input_request
-                except StopIteration:
-                    st.session_state.conversation_active = False
-
+            return next(st.session_state.conversation_generator)
     except StopIteration:
         # Conversation ended
         st.session_state.conversation_active = False
         st.session_state.conversation_generator = None
         st.session_state.awaiting_input = None
+        return None
 
 
 # Main chat interface
@@ -122,16 +124,20 @@ if prompt := st.chat_input(
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Start new conversation or continue existing one
+    # Start new conversation
     if not st.session_state.conversation_active:
-        st.session_state.conversation_generator = (
-            create_conversation_generator(prompt))
-        st.session_state.conversation_active = True
+        start_new_conversation(prompt)
 
-    # Show loading spinner
+    # Show loading spinner and process bot responses
     with st.chat_message("assistant"):
         with st.spinner("🔍 Researching your question..."):
-            continue_conversation()
+            while True:
+                response = get_next_bot_response()
+                if response is None:
+                    break
+                process_bot_response(response)
+                if response.user_input_request:
+                    break
 
     st.rerun()
 
@@ -159,14 +165,23 @@ if st.session_state.awaiting_input:
                     st.session_state.messages.append(
                         {"role": "user", "content": choice})
 
-                continue_conversation(choice)
+                # Process responses until we get another input request or end
+                while True:
+                    response = get_next_bot_response(
+                        choice) if choice else get_next_bot_response()
+                    choice = None  # Only send choice on first iteration
+                    if response is None:
+                        break
+                    process_bot_response(response)
+                    if response.user_input_request:
+                        break
                 st.rerun()
 
     else:
         # Free text input
         st.markdown("---")
         col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
+        with ((((col2)))):
             if input_req.input_type == "new_question":
                 answer = st.text_input(
                     "Enter your new health topic:",
@@ -195,7 +210,20 @@ if st.session_state.awaiting_input:
                     {"role": "user", "content": answer.strip()})
 
                 with st.spinner("Processing your response..."):
-                    continue_conversation(answer.strip())
+                    # Process responses until we get another input request
+                    # or end
+                    user_input = answer.strip()
+                    while True:
+                        response = get_next_bot_response(
+                            user_input) if user_input \
+                            else get_next_bot_response()
+
+                        user_input = None  # Only send input on first iteration
+                        if response is None:
+                            break
+                        process_bot_response(response)
+                        if response.user_input_request:
+                            break
                 st.rerun()
 
 # Footer
