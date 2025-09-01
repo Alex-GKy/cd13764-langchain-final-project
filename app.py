@@ -1,234 +1,18 @@
 import streamlit as st
-import uuid
-import os
 from typing import Generator
-from health_bot_session import HealthBotSession, UserInputRequest, BotResponse
+from health_bot_session import HealthBotSession, BotResponse
 from health_bot import create_health_bot_graph
 from langgraph.graph import END
+from ui.ui_styles import configure_page, apply_custom_styles, render_title, render_footer
+from ui.ui_sidebar import render_sidebar
 
-# Page configuration
-st.set_page_config(
-    page_title="HealthBot",
-    page_icon="🏥",
-    layout="centered",
-    initial_sidebar_state="expanded"
-)
+# Configure page and apply styling
+configure_page()
+apply_custom_styles()
+render_title()
 
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .stTitle {
-        text-align: center;
-        color: #2E8B57;
-        font-size: 3rem;
-        margin-bottom: 2rem;
-    }
-    .chat-container {
-        max-height: 600px;
-        overflow-y: auto;
-    }
-    .user-message {
-        background-color: #E8F4FD;
-        padding: 1rem;
-        border-radius: 15px;
-        margin: 0.5rem 0;
-        border-left: 4px solid #1f77b4;
-    }
-    .assistant-message {
-        background-color: #F0F8F0;
-        padding: 1rem;
-        border-radius: 15px;
-        margin: 0.5rem 0;
-        border-left: 4px solid #2E8B57;
-    }
-    .sidebar-content {
-        background-color: #f8f9fa;
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-    }
-    .stats-container {
-        display: flex;
-        justify-content: space-around;
-        background-color: #f8f9fa;
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-    }
-    .stat-item {
-        text-align: center;
-    }
-    .loading-spinner {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        padding: 2rem;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Title
-st.markdown("<h1 class='stTitle'>🏥 HealthBot</h1>", unsafe_allow_html=True)
-st.markdown(
-    "<p style='text-align: center; color: #666; font-size: 1.2rem; "
-    "margin-bottom: 2rem;'>Your AI-powered health research assistant</p>",
-    unsafe_allow_html=True)
-
-# Sidebar
-with st.sidebar:
-    st.markdown("### 📊 Session Information")
-
-    # Initialize session state
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    if "bot_session" not in st.session_state:
-        st.session_state.bot_session = None
-    if "conversation_generator" not in st.session_state:
-        st.session_state.conversation_generator = None
-    if "awaiting_input" not in st.session_state:
-        st.session_state.awaiting_input = None
-    if "conversation_active" not in st.session_state:
-        st.session_state.conversation_active = False
-    if "session_id" not in st.session_state:
-        st.session_state.session_id = str(uuid.uuid4())[:8]
-
-    # Session stats
-    message_count = len(st.session_state.messages)
-    user_messages = len(
-        [m for m in st.session_state.messages if m["role"] == "user"])
-    bot_messages = len(
-        [m for m in st.session_state.messages if m["role"] == "assistant"])
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Total Messages", message_count)
-        st.metric("Your Questions", user_messages)
-    with col2:
-        st.metric("Bot Responses", bot_messages)
-        st.metric("Session ID", st.session_state.session_id)
-
-    # Control buttons
-    st.markdown("### 🎛️ Controls")
-
-    if st.button("🗑️ Clear Conversation", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.bot_session = None
-        st.session_state.conversation_generator = None
-        st.session_state.awaiting_input = None
-        st.session_state.conversation_active = False
-        st.session_state.session_id = str(uuid.uuid4())[:8]
-        st.rerun()
-
-    if st.button("💾 Export Conversation", use_container_width=True,
-                 disabled=len(st.session_state.messages) == 0):
-        conversation_text = ""
-        for message in st.session_state.messages:
-            role = "You" if message["role"] == "user" else "HealthBot"
-            conversation_text += f"{role}: {message['content']}\n\n"
-
-        st.download_button(
-            label="📄 Download as Text",
-            data=conversation_text,
-            file_name=f"healthbot_conversation_"
-                      f"{st.session_state.session_id}.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
-
-    st.markdown("---")
-
-    # Document Upload Section
-    st.markdown("### 📄 Document Library")
-
-    # Initialize uploaded files in session state
-    if "uploaded_files" not in st.session_state:
-        st.session_state.uploaded_files = []
-    if "processed_files" not in st.session_state:
-        st.session_state.processed_files = set()
-
-    # File uploader
-    uploaded_files = st.file_uploader(
-        "Upload PDF documents",
-        type="pdf",
-        help="Upload PDF files to add them to the knowledge base",
-        label_visibility="collapsed",
-        accept_multiple_files=True
-    )
-
-    # Handle file upload
-    if uploaded_files is not None and len(uploaded_files) > 0:
-        # Check if we have new files to process
-        current_files = {f.name for f in uploaded_files}
-        new_files = current_files - st.session_state.processed_files
-
-        if new_files:
-            # Save files to health_pdfs directory (overwrite if exists)
-            os.makedirs("health_pdfs", exist_ok=True)
-
-            uploaded_count = 0
-            for uploaded_file in uploaded_files:
-                if uploaded_file.name in new_files:
-                    file_path = f"health_pdfs/{uploaded_file.name}"
-
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-
-                    # Add to session state if not already there
-                    file_names = [f["name"] for f in
-                                  st.session_state.uploaded_files]
-                    if uploaded_file.name not in file_names:
-                        st.session_state.uploaded_files.append({
-                            "name": uploaded_file.name,
-                            "path": file_path
-                        })
-
-                    uploaded_count += 1
-
-            # Update processed files
-            st.session_state.processed_files.update(new_files)
-
-            if uploaded_count == 1:
-                st.success(f"✅ Uploaded {list(new_files)[0]}")
-            elif uploaded_count > 1:
-                st.success(f"✅ Uploaded {uploaded_count} files")
-            st.rerun()
-
-    # Display all available documents
-    all_documents = []
-
-    # Add uploaded files
-    for file_info in st.session_state.uploaded_files:
-        all_documents.append(file_info['name'])
-
-    # Add existing PDF files from health_pdfs folder
-    if os.path.exists("health_pdfs"):
-        existing_pdfs = [f for f in os.listdir("health_pdfs") if
-                         f.endswith('.pdf')]
-        for pdf in existing_pdfs:
-            if pdf not in all_documents:  # Avoid duplicates
-                all_documents.append(pdf)
-
-    if all_documents:
-        st.markdown("**Available Documents:**")
-        for doc in sorted(all_documents):  # Sort alphabetically
-            st.markdown(f"📄 {doc}")
-    else:
-        st.info("No documents uploaded yet")
-
-    # Help section
-    with st.expander("❓ How to Use HealthBot"):
-        st.markdown("""
-        1. **Ask a health question** in the chat input below
-        2. **HealthBot will research** your topic using web search
-        3. **Review the summary** and choose whether to take a quiz
-        4. **Answer quiz questions** to test your understanding
-        5. **Ask follow-up questions** or explore new topics
-        
-        **Example questions:**
-        - "What are the benefits of meditation?"
-        - "How does exercise affect mental health?"
-        - "What foods help boost immunity?"
-        """)
+# Render sidebar
+render_sidebar()
 
 
 def create_conversation_generator(question: str) -> Generator:
@@ -252,7 +36,11 @@ def continue_conversation(user_input=None):
         # Handle BotResponse objects
         if isinstance(result, BotResponse):
             if result.user_input_request:
-                # Bot is requesting user input
+                # Bot is requesting user input - add question to chat history
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": result.user_input_request.prompt
+                })
                 st.session_state.awaiting_input = result.user_input_request
             elif result.message:
                 # Bot sent a message - add it to messages with source info
@@ -274,6 +62,20 @@ def continue_conversation(user_input=None):
                     "content": message_content
                 })
                 st.session_state.awaiting_input = None
+                
+                # Continue to get any follow-up input requests
+                try:
+                    next_result = next(st.session_state.conversation_generator)
+                    if (isinstance(next_result, BotResponse) and 
+                            next_result.user_input_request):
+                        # Add the question to chat history
+                        st.session_state.messages.append({
+                            "role": "assistant", 
+                            "content": next_result.user_input_request.prompt
+                        })
+                        st.session_state.awaiting_input = next_result.user_input_request
+                except StopIteration:
+                    st.session_state.conversation_active = False
 
     except StopIteration:
         # Conversation ended
@@ -323,8 +125,7 @@ if prompt := st.chat_input(
     # Start new conversation or continue existing one
     if not st.session_state.conversation_active:
         st.session_state.conversation_generator = (
-            create_conversation_generator(
-            prompt))
+            create_conversation_generator(prompt))
         st.session_state.conversation_active = True
 
     # Show loading spinner
@@ -337,10 +138,6 @@ if prompt := st.chat_input(
 # Handle pending input requests
 if st.session_state.awaiting_input:
     input_req = st.session_state.awaiting_input
-
-    # Display the bot's request
-    with st.chat_message("assistant"):
-        st.markdown(input_req.prompt)
 
     # Create appropriate input widget
     if input_req.options:
@@ -402,13 +199,4 @@ if st.session_state.awaiting_input:
                 st.rerun()
 
 # Footer
-st.markdown("---")
-st.markdown(
-    "<p style='text-align: center; color: #888; font-size: 0.9rem;'>"
-    "⚠️ <strong>Disclaimer:</strong> This bot provides information for "
-    "educational purposes only. "
-    "Always consult with qualified healthcare professionals for medical "
-    "advice."
-    "</p>",
-    unsafe_allow_html=True
-)
+render_footer()
