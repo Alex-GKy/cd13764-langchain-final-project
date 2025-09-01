@@ -2,7 +2,9 @@ import streamlit as st
 import uuid
 import os
 from typing import Generator
-from health_bot_session import HealthBotSession, UserInputRequest
+from health_bot_session import HealthBotSession, UserInputRequest, BotResponse
+from health_bot import create_health_bot_graph
+from langgraph.graph import END
 
 # Page configuration
 st.set_page_config(
@@ -231,14 +233,14 @@ with st.sidebar:
 
 def create_conversation_generator(question: str) -> Generator:
     """Create and start a conversation generator for the given question"""
-    bot_session = HealthBotSession(question)
+    graph = create_health_bot_graph()
+    bot_session = HealthBotSession(question, graph, END)
     st.session_state.bot_session = bot_session
     return bot_session.run_conversation()
 
 
 def continue_conversation(user_input=None):
-    """Continue the bot conversation, handling both messages and input
-    requests"""
+    """Continue the bot conversation, handling BotResponse objects"""
     try:
         if user_input is not None:
             # Send user response to the generator
@@ -247,34 +249,31 @@ def continue_conversation(user_input=None):
             # Get next item from generator
             result = next(st.session_state.conversation_generator)
 
-        if isinstance(result, UserInputRequest):
-            # Bot is requesting user input´
-            st.session_state.awaiting_input = result
-        else:
-            # Bot sent a message - add it to messages
-            st.session_state.messages.append(
-                {"role": "assistant", "content": result})
-            st.session_state.awaiting_input = None
-
-            # Continue processing to get any immediate follow-up messages
-            try:
-                next_result = next(st.session_state.conversation_generator)
-                if isinstance(next_result, UserInputRequest):
-                    st.session_state.awaiting_input = next_result
-                else:
-                    # Another immediate message from bot
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": next_result})
-                    # Check for another input request
-                    try:
-                        follow_up = next(
-                            st.session_state.conversation_generator)
-                        if isinstance(follow_up, UserInputRequest):
-                            st.session_state.awaiting_input = follow_up
-                    except StopIteration:
-                        st.session_state.conversation_active = False
-            except StopIteration:
-                st.session_state.conversation_active = False
+        # Handle BotResponse objects
+        if isinstance(result, BotResponse):
+            if result.user_input_request:
+                # Bot is requesting user input
+                st.session_state.awaiting_input = result.user_input_request
+            elif result.message:
+                # Bot sent a message - add it to messages with source info
+                message_content = result.message
+                
+                # Add source information if available
+                if result.information_source:
+                    source_icons = {
+                        "rag": "📚",
+                        "knowledge": "🧠", 
+                        "web": "🔍",
+                        "documents": "📄"
+                    }
+                    icon = source_icons.get(result.information_source, "ℹ️")
+                    message_content = f"{message_content}\n\n*{icon} Source: {result.information_source.title()}*"
+                
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": message_content
+                })
+                st.session_state.awaiting_input = None
 
     except StopIteration:
         # Conversation ended
