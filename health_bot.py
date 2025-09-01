@@ -1,3 +1,7 @@
+import os
+from typing import Dict, Optional
+
+import mlflow
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -5,9 +9,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, MessagesState, START, END, add_messages
 from langgraph.prebuilt import ToolNode
 from tavily import TavilyClient
-from typing import Dict, Union, Optional
-import os
-import mlflow
+
 from health_rag_service import health_rag
 from prompt_library import get_system_prompt
 
@@ -22,7 +24,9 @@ except:
 
 # base_url = "https://openai.vocareum.com/v1"
 base_url = "https://api.openai.com/v1"
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, base_url=base_url)
+llm = ChatOpenAI(model="gpt-4o-mini",
+                 temperature=0.2,
+                 base_url=base_url)
 
 
 class State(MessagesState):
@@ -52,14 +56,15 @@ def agent(state: State):
 
 
 def route_to_tool(state: State):
-    # Routes to web search tool
+    # Routes to web search tool or falls back to agent knowledge
     last_message = state["messages"][-1]
 
     # TODO need to decide which tool use here
     if last_message.tool_calls:
         return "search_health_documents"
     else:
-        return END
+        # If no tool calls, use agent's general knowledge
+        return "agent_knowledge"
 
 
 def route_after_rag(state: State):
@@ -297,22 +302,24 @@ def draw_workflow_diagram(compiled_graph, filename="health_bot_workflow.png"):
 
 def create_health_bot_graph(interrupt_before=None, checkpointer=None):
     """Factory function to create and return a configured health bot graph"""
-    
+
     if interrupt_before is None:
-        interrupt_before = ["ask_for_quiz", "ask_for_new_topic", "grade_quiz", "ask_topic_question"]
-    
+        interrupt_before = ["ask_for_quiz", "ask_for_new_topic", "grade_quiz",
+                            "ask_topic_question"]
+
     if checkpointer is None:
         checkpointer = MemorySaver()
-    
+
     # Bind tools to LLM
     llm_with_tools = llm.bind_tools([web_search, search_health_documents])
-    
+
     # Build workflow
     workflow = StateGraph(State)
     workflow.add_node("entry_point", entry_point)
     workflow.add_node("agent", agent)
     workflow.add_node("web_search", ToolNode([web_search]))
-    workflow.add_node("search_health_documents", ToolNode([search_health_documents]))
+    workflow.add_node("search_health_documents",
+                      ToolNode([search_health_documents]))
     workflow.add_node("agent_knowledge", agent_knowledge)
     workflow.add_node("summarize", summarize)
     workflow.add_node("generate_quiz", generate_quiz)
@@ -326,15 +333,17 @@ def create_health_bot_graph(interrupt_before=None, checkpointer=None):
     workflow.add_edge(START, "entry_point")
     workflow.add_edge("entry_point", "agent")
 
-    # Routes to web search tool
+    # Routes to web search tool or agent knowledge
     workflow.add_conditional_edges(source="agent", path=route_to_tool,
-                                   path_map=["search_health_documents", END])
+                                   path_map=["search_health_documents",
+                                             "agent_knowledge"])
 
     # Route after RAG search - either to summarize or agent knowledge
     workflow.add_conditional_edges(source="search_health_documents",
                                    path=route_after_rag,
                                    path_map={"summarize": "summarize",
-                                             "agent_knowledge": "agent_knowledge"})
+                                             "agent_knowledge":
+                                                 "agent_knowledge"})
 
     # Both summarize and agent_knowledge lead to quiz
     workflow.add_edge("summarize", "ask_for_quiz")
@@ -343,7 +352,8 @@ def create_health_bot_graph(interrupt_before=None, checkpointer=None):
     # Check if they wanted a quiz and route
     workflow.add_conditional_edges(source="ask_for_quiz", path=route_to_quiz,
                                    path_map={"generate_quiz": "generate_quiz",
-                                             "ask_for_new_topic": "ask_for_new_topic"})
+                                             "ask_for_new_topic":
+                                                 "ask_for_new_topic"})
 
     workflow.add_edge("generate_quiz", "grade_quiz")
 
@@ -354,7 +364,8 @@ def create_health_bot_graph(interrupt_before=None, checkpointer=None):
     workflow.add_conditional_edges(source="ask_for_new_topic",
                                    path=route_to_new_topic,
                                    path_map={
-                                       "ask_topic_question": "ask_topic_question",
+                                       "ask_topic_question":
+                                           "ask_topic_question",
                                        "goodbye_message": "goodbye_message"})
 
     # Loop back to entry_point with the new question
@@ -368,7 +379,5 @@ def create_health_bot_graph(interrupt_before=None, checkpointer=None):
         interrupt_before=interrupt_before,
         checkpointer=checkpointer
     )
-    
-    draw_workflow_diagram(compiled_graph)
-    
+
     return compiled_graph
