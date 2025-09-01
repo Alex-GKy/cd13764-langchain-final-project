@@ -5,14 +5,14 @@ from typing import Optional, Generator
 from langchain_core.runnables import RunnableConfig
 
 
-def get_source_prefix(information_source: str) -> str:
-    """Get the source prefix based on the information source"""
-    source_prefixes = {
-        "rag": "📚 Based on our curated health documents:\n\n",
-        "agent_knowledge": "🧠 Based on my general medical knowledge:\n\n",
-        "web_search": "🔍 Based on recent web search results:\n\n"
+def normalize_information_source(information_source: str) -> str:
+    """Normalize internal agent source names to unified identifiers"""
+    source_mapping = {
+        "rag": "rag",
+        "agent_knowledge": "knowledge",
+        "web_search": "web"
     }
-    return source_prefixes.get(information_source, "")
+    return source_mapping.get(information_source, "unknown")
 
 
 @dataclass
@@ -30,6 +30,7 @@ class BotResponse:
     request"""
     message: Optional[str] = None
     user_input_request: Optional[UserInputRequest] = None
+    information_source: Optional[str] = None
 
     def __post_init__(self):
         # Ensure exactly one of message or user_input_request is provided
@@ -75,18 +76,16 @@ class HealthBotSession:
                     if (
                             message.id != self.last_printed_message_id and
                             message.type == "ai" and message.content):
-
                         self.last_printed_message_id = message.id
+
+                        # get the message and source type
                         content = message.content
+                        raw_source = event.get("information_source")
+                        normalized_source = normalize_information_source(
+                            raw_source) if raw_source else None
 
-                        # Check if we have source information and prepend it
-                        if information_source := event.get(
-                                "information_source"):
-                            source_prefix = get_source_prefix(
-                                information_source)
-                            content = source_prefix + content
-
-                        yield BotResponse(message=content)
+                        yield BotResponse(message=content,
+                                          information_source=normalized_source)
 
             # Check what's next after streaming stops
             state = self.graph.get_state(self.config)
