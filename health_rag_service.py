@@ -9,9 +9,9 @@ from haystack.components.retrievers import InMemoryEmbeddingRetriever
 from haystack.document_stores.in_memory import InMemoryDocumentStore
 from typing import List, Optional, Tuple
 
-from dotenv_loader import api_key
+from dotenv_loader import openai_api_key
 
-os.environ["OPENAI_API_KEY"] = api_key
+os.environ["OPENAI_API_KEY"] = openai_api_key
 
 
 class HealthRAGService:

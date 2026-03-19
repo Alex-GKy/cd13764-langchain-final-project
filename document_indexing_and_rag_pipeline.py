@@ -11,9 +11,9 @@ from haystack.components.builders import PromptBuilder
 from haystack.document_stores.in_memory import InMemoryDocumentStore
 
 # Set your OpenAI API key
-from dotenv_loader import api_key
+from dotenv_loader import openai_api_key
 
-os.environ["OPENAI_API_KEY"] = api_key
+os.environ["OPENAI_API_KEY"] = openai_api_key
 
 
 def main():

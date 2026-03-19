@@ -22,11 +22,12 @@ try:
 except:
     print("MLflow server not running. Proceeding without MLflow.")
 
-# base_url = "https://openai.vocareum.com/v1"
-base_url = "https://api.openai.com/v1"
-llm = ChatOpenAI(model="gpt-4o-mini",
-                 temperature=0.2,
-                 base_url=base_url)
+LLM_MODEL = "openai/gpt-5.4-mini"
+LLM_BASE_URL = "https://openrouter.ai/api/v1"
+LLM_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+llm = ChatOpenAI(model=LLM_MODEL, temperature=0.2,
+                 base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
 
 
 class State(MessagesState):
@@ -93,9 +94,8 @@ def agent_knowledge(state: State):
 
     # Create a separate LLM instance without tools for agent knowledge fallback
     # Otherwise it will try to use a tool call
-    llm_no_tools = ChatOpenAI(model="gpt-4o-mini",
-                              temperature=0.2,
-                              base_url=base_url)
+    llm_no_tools = ChatOpenAI(model=LLM_MODEL, temperature=0.2,
+                              base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
 
     # Get the original user question from the state
     user_question = state.get("user_question", "")
@@ -259,7 +259,7 @@ def generate_quiz(state: State):
         "Do not generate the correct answer yet."
         f'Use only this information as source for your question: '
         f'{state["summary"]}')
-    ai_message = llm.invoke(state["messages"] + [system_message])
+    ai_message = llm.invoke([system_message, HumanMessage("Generate the quiz question now.")])
 
     return {"messages": [ai_message],
             "comprehension_question": ai_message.content}
