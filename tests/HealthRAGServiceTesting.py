@@ -1,5 +1,5 @@
 
-from health_rag_service import HealthRAGService
+from health_chatbot.health_rag_service import HealthRAGService
 
 def main():
     # Create service instance

@@ -1,4 +1,4 @@
-from health_bot import HealthBotSession, UserInputRequest
+from health_chatbot.health_bot_session import HealthBotSession, UserInputRequest
 
 
 class HealthBotRunner:

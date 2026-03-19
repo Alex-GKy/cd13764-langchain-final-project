@@ -1,10 +1,10 @@
 import streamlit as st
 from langgraph.graph import END
 
-from health_bot import create_health_bot_graph
-from health_bot_session import HealthBotSession, BotResponse
-from ui.ui_sidebar import render_sidebar
-from ui.ui_styles import (
+from health_chatbot.health_bot import create_health_bot_graph
+from health_chatbot.health_bot_session import HealthBotSession, BotResponse
+from health_chatbot.ui.ui_sidebar import render_sidebar
+from health_chatbot.ui.ui_styles import (
     configure_page, apply_custom_styles, render_title, render_footer
 )
 

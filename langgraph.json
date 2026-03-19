@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "health_bot": "health_chatbot.health_bot:graph"
+  },
+  "env": ".env"
+}

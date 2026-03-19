@@ -1,7 +1,7 @@
 from langgraph.graph import END
 
-from health_bot import create_health_bot_graph, draw_workflow_diagram
-from health_bot_session import HealthBotSession
+from health_chatbot.health_bot import create_health_bot_graph, draw_workflow_diagram
+from health_chatbot.health_bot_session import HealthBotSession
 
 
 def main():

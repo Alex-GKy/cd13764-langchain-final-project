@@ -9,7 +9,7 @@ from haystack.components.retrievers import InMemoryEmbeddingRetriever
 from haystack.document_stores.in_memory import InMemoryDocumentStore
 from typing import List, Optional, Tuple
 
-from dotenv_loader import api_key
+from health_chatbot.dotenv_loader import api_key
 
 os.environ["OPENAI_API_KEY"] = api_key
 
@@ -58,7 +58,7 @@ class HealthRAGService:
             print(
                 f"PDF folder '{pdf_folder}' not found. Creating sample "
                 f"PDFs...")
-            from health_pdf_creator import create_health_pdfs
+            from health_chatbot.health_pdf_creator import create_health_pdfs
             create_health_pdfs()
 
         pdf_files = [f"{pdf_folder}/{f}" for f in os.listdir(pdf_folder)

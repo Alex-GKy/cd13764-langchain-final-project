@@ -1,6 +1,6 @@
-from health_bot_session import HealthBotSession
-from health_bot import graph, END
-from prompt_library import get_system_prompt
+from health_chatbot.health_bot_session import HealthBotSession
+from health_chatbot.health_bot import graph, END
+from health_chatbot.prompt_library import get_system_prompt
 
 def test_rag_only():
     """Test the agent with RAG-only functionality"""
@@ -30,8 +30,9 @@ def test_rag_only():
             
             # Get the first response
             response = next(conversation)
-            print(f"✅ Response received (length: {len(response)} chars)")
-            print(response[:200] + "..." if len(response) > 200 else response)
+            content = response.message if response.message else str(response.user_input_request)
+            print(f"✅ Response received (length: {len(content)} chars)")
+            print(content[:200] + "..." if len(content) > 200 else content)
             
         except Exception as e:
             print(f"❌ Error: {e}")

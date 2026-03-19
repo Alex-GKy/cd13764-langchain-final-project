@@ -5,13 +5,12 @@ import mlflow
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, MessagesState, START, END, add_messages
 from langgraph.prebuilt import ToolNode
 from tavily import TavilyClient
 
-from health_rag_service import health_rag
-from prompt_library import get_system_prompt
+from health_chatbot.health_rag_service import health_rag
+from health_chatbot.prompt_library import get_system_prompt
 
 # MLFlow setup
 try:
@@ -309,9 +308,6 @@ def create_health_bot_graph(interrupt_before=None, checkpointer=None):
         interrupt_before = ["ask_for_quiz", "ask_for_new_topic", "grade_quiz",
                             "ask_topic_question"]
 
-    if checkpointer is None:
-        checkpointer = MemorySaver()
-
     # Bind tools to LLM
     llm = llm.bind_tools([web_search, search_health_documents])
 
@@ -377,9 +373,14 @@ def create_health_bot_graph(interrupt_before=None, checkpointer=None):
     workflow.add_edge("goodbye_message", END)
 
     # Compile and return the graph
-    compiled_graph = workflow.compile(
-        interrupt_before=interrupt_before,
-        checkpointer=checkpointer
-    )
+    compile_kwargs = {"interrupt_before": interrupt_before}
+    if checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+
+    compiled_graph = workflow.compile(**compile_kwargs)
 
     return compiled_graph
+
+
+# Create the graph instance for langgraph server
+graph = create_health_bot_graph()
